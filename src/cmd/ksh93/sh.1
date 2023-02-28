@@ -5151,6 +5151,11 @@ on current line.
 .BI ^X^X
 Interchange the cursor and mark.
 .TP 10
+.BI ^X^E
+Returns the command
+.BI "hist \-e ${\s-1VISUAL\s+1:\-${\s-1EDITOR\s+1:\-vi}}"
+in the input buffer to edit the current history line.
+.TP 10
 .I erase
 (User defined erase character as defined
 by the
