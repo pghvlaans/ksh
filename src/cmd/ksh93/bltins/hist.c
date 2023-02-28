@@ -41,9 +41,9 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 {
 	register History_t *hp;
 	register char *arg;
-	register int flag,fdo;
-	Sfio_t *outfile;
-	char *fname;
+	register int flag,fdo,cdo;
+	Sfio_t *outfile,*coutfile;
+	char *fname,*cname;
 	int range[2], incr, index2, indx= -1;
 	char *edit = 0;		/* name of editor */
 	char *replace = 0;	/* replace old=new */
@@ -213,6 +213,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			UNREACHABLE();
 		}
 		outfile= sfnew(NIL(Sfio_t*),sh.outbuff,IOBSIZE,fdo,SF_WRITE);
+		
 		arg = "\n";
 		nflag++;
 	}
@@ -223,6 +224,19 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		else if(lflag)
 			sfputc(outfile,'\t');
 		hist_list(sh.hist_ptr,outfile,hist_tell(sh.hist_ptr,range[flag]),0,arg);
+		if(!(cname=pathtmp(NIL(char*),0,0,NIL(int*))))
+		{
+			errormsg(SH_DICT,ERROR_exit(1),e_create,"");
+			UNREACHABLE();
+		}
+		if((cdo=open(cname,O_CREAT|O_RDWR,S_IRUSR|S_IWUSR)) < 0)
+		{
+			errormsg(SH_DICT,ERROR_system(1),e_create,cname);
+			UNREACHABLE();
+		}
+		sh_iosave(fdo,sh.topfd,cname);
+		coutfile= sfnew(NIL(Sfio_t*),sh.outbuff,IOBSIZE,cdo,SF_WRITE);
+		hist_list(sh.hist_ptr,coutfile,hist_tell(sh.hist_ptr,range[flag]),0,arg);
 		if(lflag)
 			sh_sigcheck();
 		if(range[flag] == range[1-flag])
@@ -243,17 +257,30 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			UNREACHABLE();
 		}
 	}
+	char differ=1;
 	if(*arg != '-')
 	{
-		char *com[3];
+		char *com[3],*dcom[5];
 		com[0] =  arg;
 		com[1] =  fname;
 		com[2] = 0;
 		error_info.errors = sh_eval(sh_sfeval(com),0);
+
+		dcom[0] =  "cmp";
+		dcom[1] =  fname;
+		dcom[2] =  cname;
+		dcom[3] =  "> /dev/null";
+		dcom[4] = 0;
+		differ = sh_eval(sh_sfeval(dcom),0);
 	}
+
 	fdo = sh_chkopen(fname);
 	unlink(fname);
 	free((void*)fname);
+	cdo = sh_chkopen(cname);
+	unlink(cname);
+	free((void*)cname);
+
 	/* don't history fc itself unless forked */
 	error_info.flags |= ERROR_SILENT;
 	if(!sh_isstate(SH_FORKED))
@@ -264,25 +291,37 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 	{
 		hist_subst(error_info.id,fdo,replace);
 		sh_close(fdo);
+		sh_close(cdo);
 	}
 	else if(error_info.errors == 0)
 	{
-		char buff[IOBSIZE+1];
-		Sfio_t *iop;
+		char buff[IOBSIZE+1],cbuff[IOBSIZE+1];
+		Sfio_t *iop,*cop;
 		/* read in and run the command */
 		if(sh.hist_depth++ > HIST_RECURSE)
 		{
 			sh_close(fdo);
+			sh_close(cdo);
 			errormsg(SH_DICT,ERROR_exit(1),e_toodeep,"history");
 			UNREACHABLE();
 		}
 		iop = sfnew(NIL(Sfio_t*),buff,IOBSIZE,fdo,SF_READ);
-		sh_eval(iop,1); /* this will close fdo */
+
+		if(differ)
+		{
+			hist_cancel(hp);
+			sh_eval(iop,1);  /* this will close fdo */
+		}
+		else
+			sh_close(fdo);
+
 		sh.hist_depth--;
+		sh_close(cdo);
 	}
 	else
 	{
 		sh_close(fdo);
+		sh_close(cdo);
 		if(!sh_isoption(SH_VERBOSE))
 			sh_offstate(SH_VERBOSE);
 		sh_offstate(SH_HISTORY);
