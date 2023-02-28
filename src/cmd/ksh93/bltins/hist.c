@@ -213,7 +213,6 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			UNREACHABLE();
 		}
 		outfile= sfnew(NIL(Sfio_t*),sh.outbuff,IOBSIZE,fdo,SF_WRITE);
-		
 		arg = "\n";
 		nflag++;
 	}
@@ -273,14 +272,12 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		dcom[4] = 0;
 		differ = sh_eval(sh_sfeval(dcom),0);
 	}
-
 	fdo = sh_chkopen(fname);
 	unlink(fname);
 	free((void*)fname);
 	cdo = sh_chkopen(cname);
 	unlink(cname);
 	free((void*)cname);
-
 	/* don't history fc itself unless forked */
 	error_info.flags |= ERROR_SILENT;
 	if(!sh_isstate(SH_FORKED))
@@ -306,15 +303,13 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			UNREACHABLE();
 		}
 		iop = sfnew(NIL(Sfio_t*),buff,IOBSIZE,fdo,SF_READ);
-
 		if(differ)
+			sh_eval(iop,1);  /* this will close fdo */
+		else
 		{
 			hist_cancel(hp);
-			sh_eval(iop,1);  /* this will close fdo */
-		}
-		else
 			sh_close(fdo);
-
+		}
 		sh.hist_depth--;
 		sh_close(cdo);
 	}
