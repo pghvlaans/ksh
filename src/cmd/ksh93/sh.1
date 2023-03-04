@@ -39,7 +39,7 @@ ksh93, rksh93 \- KornShell, a standard/restricted command and programming langua
 .B ksh93
 .\}
 [
-.B \(+-abcefiklmnprstuvxBCDEGH
+.B \(+-abcefhiklmnprstuvxBCDEGH
 ] [
 .B \(+-o
 option ] .\|.\|. [
@@ -56,7 +56,7 @@ option ] .\|.\|. [
 .B rksh93
 .\}
 [
-.B \(+-abcefiklmnpstuvxBCDEGH
+.B \(+-abcefhiklmnpstuvxBCDEGH
 ] [
 .B \(+-o
 option ] .\|.\|. [
@@ -6953,8 +6953,7 @@ option or by name with the
 option
 (as given in
 .BR <signal.h> ,
-stripped of the prefix ``SIG'' with
-the exception that SIGCLD is named CHLD).
+stripped of the prefix ``SIG''.
 For backward compatibility, the
 .B n
 and

@@ -2,7 +2,7 @@
 *                                                                      *
 *               This software is part of the ast package               *
 *          Copyright (c) 1982-2012 AT&T Intellectual Property          *
-*          Copyright (c) 2020-2022 Contributors to ksh 93u+m           *
+*          Copyright (c) 2020-2023 Contributors to ksh 93u+m           *
 *                      and is licensed under the                       *
 *                 Eclipse Public License, Version 2.0                  *
 *                                                                      *
@@ -45,8 +45,10 @@ const char e_runvi[]		= "\\hist -e \"${VISUAL:-${EDITOR:-vi}}\" ";
 const char e_timeout[]		= "timed out waiting for input";
 const char e_mailmsg[]		= "you have mail in $_";
 const char e_query[]		= "no query process";
+#if !SHOPT_SCRIPTONLY
 const char e_history[]		= "no history file";
 const char e_histopen[]		= "cannot open history file";
+#endif /* !SHOPT_SCRIPTONLY */
 const char e_optincompat1[]	= "%s cannot be used with other options";
 const char e_optincompat2[]	= "%s cannot be used with %s";
 const char e_toomany[]		= "open file limit exceeded";
@@ -144,24 +146,20 @@ const char is_talias[]		= "is a tracked alias for";
 const char is_function[]	= " is a function";
 const char is_ufunction[]	= " is an undefined function";
 const char e_autoloadfrom[]	= " (autoload from %s)";
-#ifdef JOBS
-#   ifdef SIGTSTP
-	const char e_newtty[]	= "Switching to new tty driver...";
-	const char e_oldtty[]	= "Reverting to old tty driver...";
-	const char e_no_start[]	= "Cannot start job control";
-#   endif /*SIGTSTP */
-    const char e_no_jctl[]	= "No job control";
-    const char e_terminate[]	= "You have stopped jobs";
-    const char e_done[]		= " Done";
-    const char e_nlspace[]	= "\n      ";
-    const char e_running[]	= " Running";
-    const char e_ambiguous[]	= "%s: Ambiguous";
-    const char e_jobsrunning[]	= "You have running jobs";
-    const char e_no_job[]	= "no such job";
-    const char e_no_proc[]	= "no such process";
-    const char e_badpid[]	= "%s: invalid process ID";
-    const char e_jobusage[]	= "%s: Arguments must be %%job or process IDs";
-#endif /* JOBS */
+const char e_newtty[]		= "Switching to new tty driver...";
+const char e_oldtty[]		= "Reverting to old tty driver...";
+const char e_no_start[]		= "Cannot start job control";
+const char e_no_jctl[]		= "No job control";
+const char e_terminate[]	= "You have stopped jobs";
+const char e_done[]		= " Done";
+const char e_nlspace[]		= "\n      ";
+const char e_running[]		= " Running";
+const char e_ambiguous[]	= "%s: Ambiguous";
+const char e_jobsrunning[]	= "You have running jobs";
+const char e_no_job[]		= "no such job";
+const char e_no_proc[]		= "no such process";
+const char e_badpid[]		= "%s: invalid process ID";
+const char e_jobusage[]		= "%s: Arguments must be %%job or process IDs";
 const char e_coredump[]		= "(coredump)";
 const char e_alphanum[]		= "[_[:alpha:]]*([_[:alnum:]])";
 const char e_devfdNN[]		= "/dev/fd/+([0-9])";
@@ -197,8 +195,13 @@ const char e_sysrc[]		= "/etc/ksh.kshrc";
    const char e_suidexec[]	= "/etc/suid_exec";
 #endif /* SHOPT_SUID_EXEC */
 #endif
+#if !SHOPT_SCRIPTONLY
 const char hist_fname[]		= "/.sh_history";
+#endif /* !SHOPT_SCRIPTONLY */
 const char e_dot[]		= ".";
 const char e_timeformat[]	= "\nreal\t%3lR\nuser\t%3lU\nsys\t%3lS";
 const char e_dict[]		= "libshell";
 const char e_funload[]		= "function, built-in or type definition for %s not found in %s";
+#if SHOPT_SCRIPTONLY
+const char e_scriptonly[]	= "script-only shell";
+#endif /* SHOPT_SCRIPTONLY */

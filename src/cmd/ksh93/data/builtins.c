@@ -97,21 +97,13 @@ const struct shtable3 shtab_builtins[] =
 #else
 	"echo",		NV_BLTIN|BLT_ENV,		Bltin(echo),
 #endif /* SHOPT_ECHOPRINT */
-#ifdef JOBS
-#   ifdef SIGTSTP
 	"bg",		NV_BLTIN|BLT_ENV,		bltin(bg),
 	"fg",		NV_BLTIN|BLT_ENV|BLT_EXIT,	bltin(bg),
 	"disown",	NV_BLTIN|BLT_ENV,		bltin(bg),
 	"kill",		NV_BLTIN|BLT_ENV,		bltin(kill),
-#   else
-	"/bin/kill",	NV_BLTIN|BLT_ENV,		bltin(kill),
-#   endif	/* SIGTSTP */
 	"jobs",		NV_BLTIN|BLT_ENV,		bltin(jobs),
-#   ifdef SIGSTOP
 	"stop",		NV_BLTIN|BLT_ENV,		bltin(kill),
 	"suspend", 	NV_BLTIN|BLT_ENV,		bltin(suspend),
-#   endif	/* SIGSTOP */
-#endif	/* JOBS */
 	"false",	NV_BLTIN|BLT_ENV,		bltin(false),
 	"getopts",	NV_BLTIN|BLT_ENV,		bltin(getopts),
 #if SHOPT_MKSERVICE
@@ -220,9 +212,11 @@ const char sh_set[] =
 	"the command.  Ordinarily, variable assignments must precede "
 	"command arguments.]"
 "[m?When enabled, the shell runs background jobs in a separate process "
-	"group and displays a line upon completion.  This mode is enabled "
-	"by default for interactive shells on systems that support job "
-	"control.]"
+	"group and displays a line upon completion."
+#if !SHOPT_SCRIPTONLY
+	" This mode is enabled by default for interactive shells."
+#endif
+	"]"
 "[n?The shell reads commands and checks for syntax errors, but does "
 	"not execute the command.  Usually specified on command invocation.]"
 "[o]:?[option?A \b-o\b with no \aoption\a will write the list of options and "
@@ -284,8 +278,10 @@ const char sh_set[] =
 			"prompt's edit buffer, allowing further changes.]"
 #endif
 #endif
+#if !SHOPT_SCRIPTONLY
 		"[+ignoreeof?Prevents an interactive shell from exiting on "
 			"reading an end-of-file.]"
+#endif
 		"[+keyword?Equivalent to \b-k\b.]"
 		"[+letoctal?The \blet\b builtin recognizes octal constants "
 			"with leading 0.]"
@@ -621,9 +617,11 @@ const char sh_optdot[]	 =
 "\n"
 "[+EXIT STATUS?If \aname\a is found, then the exit status is that of the last "
 	"command executed. Otherwise, it is non-zero. \b.\b, being a special "
-	"built-in, will exit the current shell environment or abort execution "
-	"of the interactive command line upon error, whereas \bsource\b will "
-	"allow execution to continue.]"
+	"built-in, will exit the current shell environment"
+#if !SHOPT_SCRIPTONLY
+	" or abort execution of the interactive command line upon error"
+#endif
+	", whereas \bsource\b will allow execution to continue.]"
 "[+SEE ALSO?\bcommand\b(1), \bksh\b(1)]"
 ;
 
@@ -1011,6 +1009,7 @@ const char sh_opthash[] =
 "[+SEE ALSO?\bsh\b(1), \balias\b(1)]"
 ;
 
+#if !SHOPT_SCRIPTONLY
 const char sh_opthist[]	= 
 "[-1cn?\n@(#)$Id: hist (AT&T Research) 2000-04-02 $\n]"
 "[--catalog?" SH_DICT "]"
@@ -1078,6 +1077,7 @@ const char sh_opthist[]	=
 
 "[+SEE ALSO?\bksh\b(1), \bsh\b(1), \bed\b(1)]"
 ;
+#endif /* !SHOPT_SCRIPTONLY */
 
 const char sh_optkill[]	 = 
 "[-1c?\n@(#)$Id: kill (ksh 93u+m) 2022-08-30 $\n]"
@@ -1130,7 +1130,6 @@ _JOB_
 "[+SEE ALSO?\bps\b(1), \bjobs\b(1), \bkill\b(2), \bsignal\b(2)]"
 ;
 
-#if defined(JOBS) && defined(SIGSTOP)
 const char sh_optstop[] =
 "[-1c?\n@(#)$Id: stop (ksh 93u+m) 2020-06-22 $\n]"
 "[--catalog?" SH_DICT "]"
@@ -1166,7 +1165,6 @@ const char sh_optsuspend[] =
 "}"
 "[+SEE ALSO?\bkill\b(1)]"
 ;
-#endif /* defined(JOBS) && defined(SIGSTOP) */
 
 const char sh_optlet[]	=
 "[-1c?\n@(#)$Id: let (AT&T Research) 2000-04-02 $\n]"
@@ -1229,8 +1227,10 @@ const char sh_optprint[] =
 "[p?Write to the current co-process instead of standard output.]"
 "[r?Do not process \b\\\b sequences in each \astring\a operand as described "
 	"above.]"
+#if !SHOPT_SCRIPTONLY
 "[s?Write the output as an entry in the shell history file instead of "
 	"standard output.]"
+#endif /* !SHOPT_SCRIPTONLY */
 "[u]:[fd:=1?Write to file descriptor number \afd\a instead of standard output. "
 	"If \afd\a is \bp\b, write to the co-process; same as \b-p\b.]"
 "[v?Treat each \astring\a as a variable name and write the value in \b%B\b "
@@ -1486,7 +1486,9 @@ const char sh_optread[] =
 	"An end-of-file causes \bread\b to disconnect the co-process "
 	"so that another can be created.]"
 "[r?Raw mode. Do not treat \b\\\b specially when processing the input line.]"
+#if !SHOPT_SCRIPTONLY
 "[s?Save a copy of the input as an entry in the shell history file.]"
+#endif
 "[S?Treat the input as if it was saved from a spreadsheet in csv format.]"
 "[u]:[fd:=0?Read from file descriptor number \afd\a instead of standard input. "
 	"If \afd\a is \bp\b, read from the co-process; same as \b-p\b.]"
@@ -1603,9 +1605,11 @@ const char sh_optksh[] =
 "[+DESCRIPTION?\b\f?\f\b is a command language interpreter that "
 	"executes commands read from a command line string, the "
 	"standard input, or a specified file.]"
+#if !SHOPT_SCRIPTONLY
 "[+?If the \b-i\b option is specified, or there are no \aarg\as and "
 	"the standard input and standard error are attached to a "
 	"terminal, the shell is considered to be interactive.]"
+#endif
 "[+?If neither \b-s\b nor \b-c\b is specified, then the first \barg\b "
 	"will be the pathname of the file containing commands and \b$0\b "
 	"will be set to this value.  If there is no file with this pathname, "
@@ -1622,7 +1626,11 @@ const char sh_optksh[] =
 	"Any \aarg\as become the positional parameters starting at \b$1\b. "
 	"This option is forced on if no \aarg\a is given "
 	"and is ignored if \b-c\b is also specified.]"
-"[i?Specifies that the shell is interactive.]"
+"[i?Specifies that the shell is interactive."
+#if SHOPT_SCRIPTONLY
+	" Not supported, as this ksh was compiled as a script-only shell."
+#endif
+	"]"
 "[l?Invoke the shell as a login shell; \b/etc/profile\b and \b$HOME/.profile\b, "
 	"if they exist, are read before the first command.]"
 "[r\f:restricted\f?Invoke the shell in a restricted mode.  A restricted "
@@ -1644,8 +1652,11 @@ const char sh_optksh[] =
 #if SHOPT_SYSRC
 	"\b/etc/ksh.kshrc\b, if it exists, as a profile, followed by "
 #endif
-	"\b${ENV-$HOME/.kshrc}\b, if it exists, as a profile. "
-	"On by default for interactive shells; use \b+E\b to disable.]"
+	"\b${ENV-$HOME/.kshrc}\b, if it exists, as a profile."
+#if !SHOPT_SCRIPTONLY
+	" On by default for interactive shells; use \b+E\b to disable."
+#endif
+	"]"
 #if SHOPT_KIA
 "[R]:[file?Do not execute the script, but create a cross-reference database "
 	"in \afile\a that can be used in a separate shell script browser. The "
