@@ -3,7 +3,7 @@ hdr	nl_types,langinfo
 nxt	nl_types
 
 tst	output{
-	#if !_lib_catopen
+	#if !_lib_catopen || defined __TERMUX__
 	#undef	_hdr_nl_types
 	#endif
 	#include "FEATURE/limits"
