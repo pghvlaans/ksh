@@ -4,7 +4,9 @@ nxt	nl_types
 
 tst	output{
 	#if !_lib_catopen
+	#if defined __TERMUX__
 	#undef	_hdr_nl_types
+	#endif
 	#endif
 	#include "FEATURE/limits"
 	#if _hdr_nl_types
