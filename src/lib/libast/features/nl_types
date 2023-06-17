@@ -3,7 +3,7 @@ hdr	nl_types,langinfo
 nxt	nl_types
 
 tst	output{
-	#if !_lib_catopen || defined __TERMUX__
+	#if !_lib_catopen || defined(__TERMUX__)
 	#undef	_hdr_nl_types
 	#endif
 	#include "FEATURE/limits"
@@ -15,7 +15,7 @@ tst	output{
 	main(void)
 	{
 		printf("#include <limits.h>\n");
-	#if _hdr_nl_types && defined(_nxt_nl_types_str)
+	#if _hdr_nl_types && defined(_nxt_nl_types_str) && !defined(__TERMUX__)
 		printf("#include <%s>	/* the native nl_types.h */\n", _nxt_nl_types_str);
 	#endif
 		printf("\n");
