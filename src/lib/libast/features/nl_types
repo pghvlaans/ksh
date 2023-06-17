@@ -38,7 +38,7 @@ tst	output{
 		printf("#undef	NL_CAT_LOCALE\n");
 		printf("#define NL_CAT_LOCALE	1\n");
 	#endif
-	#if _lib_catopen || __TERMUX__
+	#if _lib_catopen || defined __TERMUX__
 		printf("#undef	nl_catd\n");
 		printf("#define	nl_catd		_ast_nl_catd\n");
 		printf("#undef	catopen\n");
