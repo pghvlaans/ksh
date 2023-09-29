@@ -81,6 +81,8 @@ typedef struct edit
 	int	e_lookahead;	/* index in look-ahead buffer */
 	int	e_fcol;		/* first column */
 	int	e_wsize;	/* width of display window */
+	int	e_edge;		/* edge of the screen */
+	char	e_winched;	/* line has already been adjusted */
 #if SHOPT_MULTIBYTE
 	int	e_savedwidth;	/* saved width of a character */
 #endif /* SHOPT_MULTIBYTE */
