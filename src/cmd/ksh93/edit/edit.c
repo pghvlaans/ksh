@@ -718,7 +718,7 @@ int ed_read(void *context, int fd, char *buff, int size, int reedit)
 		if(sh.trapnote&(SH_SIGSET|SH_SIGTRAP))
 			goto done;
 #if SHOPT_ESH || SHOPT_VSH
-		if(ep->e_eol > ep->e_edge - ep->e_plen && !ep->e_winched)
+		if(ep->e_eol >= ep->e_edge - ep->e_plen && !ep->e_winched)
 		{
 			ep->e_winched = 1;
 			sh.winch = 1;
@@ -749,7 +749,7 @@ int ed_read(void *context, int fd, char *buff, int size, int reedit)
 			else
 			{
 				ed_nputchar(ep,newsize-1,' ');
-				ed_putstring(ep,erase_eos);
+				ed_putchar(ep,'\r');
 			}
 			ed_flush(ep);
 			/* show any buffered 'set -b' job notification(s) */
