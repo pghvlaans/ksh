@@ -1685,7 +1685,7 @@ static void draw(Emacs_t *ep,Draw_t option)
 		else
 			longline = UPPER;
 	}
-	else 
+	else
 	{
 		if (ep->offset > 0)
 			longline = LOWER;
