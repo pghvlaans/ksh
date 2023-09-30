@@ -477,8 +477,8 @@ void	ed_setup(Edit_t *ep, int fd, int reedit)
 	}
 	ep->e_hline = ep->e_hismax;
 	ep->e_wsize = sh_editor_active() ? ed_window()-2 : MAXLINE;
-	ep->e_edge = ep->e_wsize;
 	ep->e_winsz = ep->e_wsize+2;
+	ep->e_edge = ep->e_winsz;
 	ep->e_crlf = 1;
 	ep->e_plen = 0;
 	/*
@@ -718,7 +718,7 @@ int ed_read(void *context, int fd, char *buff, int size, int reedit)
 		if(sh.trapnote&(SH_SIGSET|SH_SIGTRAP))
 			goto done;
 #if SHOPT_ESH || SHOPT_VSH
-		if(ep->e_eol >= ep->e_edge - ep->e_plen && !ep->e_winched)
+		if(ep->e_plen && ep->e_eol > ep->e_edge - ep->e_plen && !ep->e_winched)
 		{
 			ep->e_winched = 1;
 			sh.winch = 1;
@@ -765,6 +765,7 @@ int ed_read(void *context, int fd, char *buff, int size, int reedit)
 					ep->e_wsize = ep->e_winsz-2;
 				if(ep->e_wsize > ep->e_plen)
 					ep->e_wsize -= ep->e_plen;
+				ep->e_edge = ep->e_winsz;
 			}
 			/* redraw command line */
 #if SHOPT_ESH && SHOPT_VSH
