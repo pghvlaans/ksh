@@ -179,6 +179,7 @@ static const char paren_chars[] = "([{)]}";   /* for % command */
 static char	blankline(Vi_t*);
 static void	cursor(Vi_t*, int);
 static void	del_line(Vi_t*,int);
+static void	dowinch(Vi_t*);
 static int	getcount(Vi_t*,int);
 static void	getline(Vi_t*,int);
 static int	getrchar(Vi_t*);
@@ -545,6 +546,7 @@ static int cntlmode(Vi_t *vp)
 
 		case cntl('V'):
 		{
+			dowinch(vp);
 			const char *p = fmtident(e_version);
 			save_v(vp);
 			del_line(vp,BAD);
@@ -624,6 +626,7 @@ static int cntlmode(Vi_t *vp)
 			save_v(vp);
 			cur_virt = INVALID;
 		newhist:
+			dowinch(vp);
 			if(curhline!=histmax || cur_virt==INVALID)
 				hist_copy((char*)virtual, MAXLINE, curhline,-1);
 			else
@@ -679,6 +682,7 @@ static int cntlmode(Vi_t *vp)
 			/* FALLTHROUGH */
 
 		case 'G':		/** goto command repeat **/
+			dowinch(vp);
 			if(vp->repeat_set==0)
 				vp->repeat = histmin+1;
 			if( vp->repeat <= histmin || vp->repeat > histmax )
@@ -713,6 +717,7 @@ static int cntlmode(Vi_t *vp)
 		case '#':	/** insert(delete) # to (no)comment command **/
 			if( cur_virt != INVALID )
 			{
+				dowinch(vp);
 				genchar *p = &virtual[last_virt+1];
 				*p = 0;
 				/*** see whether first char is comment char ***/
@@ -1846,7 +1851,7 @@ static void refresh(Vi_t* vp, int mode)
 	cur_phys = w + first_w;
 	vp->last_wind = --new_lw;
 
-	if( last_phys >= w_size )
+	if( last_phys >= w_size && vp->ed->e_winched )
 	{
 		if( first_w == 0 )
 			vp->long_char = '>';
@@ -2052,6 +2057,7 @@ static int search(Vi_t* vp,int mode)
 	int i;
 	Histloc_t  location;
 
+	dowinch(vp);
 	if( vp->direction == -2 && mode != 'n' && mode != 'N' )
 		vp->direction = -1;
 	if( mode == '/' || mode == '?' )
@@ -2293,6 +2299,7 @@ addin:
 	{
 		if(cur_virt == INVALID || blankline(vp))
 			return BAD;
+		dowinch(vp);
 		/* FALLTHROUGH */
 		save_v(vp);
 		i = last_virt;
@@ -2354,6 +2361,7 @@ addin:
 			vp->lastmacro = c;
 		if(ed_macro(vp->ed,c))
 		{
+			dowinch(vp);
 			save_v(vp);
 			inmacro++;
 			return GOOD;
@@ -2364,6 +2372,7 @@ addin:
 	case '_':		/** append last argument of prev command **/
 		save_v(vp);
 		{
+			dowinch(vp);
 			genchar tmpbuf[MAXLINE];
 			if(vp->repeat_set==0)
 				vp->repeat = -1;
@@ -2502,6 +2511,7 @@ deleol:
 		if( p[0] == '\0' )
 			return BAD;
 
+		dowinch(vp);
 		if( mode != 's' && mode != 'c' )
 		{
 			save_v(vp);
@@ -2671,6 +2681,18 @@ static int getrchar(Vi_t *vp)
 	if((c=ed_getchar(vp->ed,1))== usrlnext)
 		c = ed_getchar(vp->ed,2);
 	return c;
+}
+
+/*
+ * perform the winch procedure if necessary
+ */
+static void dowinch(Vi_t *vp)
+{
+	if(!vp->ed->e_multiline && !vp->ed->e_winched)
+	{
+		sh.winch = 1;
+		vp->ed->e_winched = 1;
+	}
 }
 
 #endif /* !SHOPT_VSH */
