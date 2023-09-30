@@ -1693,7 +1693,7 @@ static void draw(Emacs_t *ep,Draw_t option)
 	
 	/* Update screen overflow indicator if need be */
 	
-	if (longline != ep->overflow && !ep->ed->e_winched)
+	if (longline != ep->overflow && ep->ed->e_winched)
 	{
 		setcursor(ep,w_size,longline);
 		ep->overflow = longline;
