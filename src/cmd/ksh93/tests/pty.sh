@@ -650,10 +650,19 @@ w set -o emacs
 p :test-2:
 w \cRset\\\\\\\\\cH\cH\cH\cH\cH
 r ^:test-2: set -o emacs$
+!
+
+((SHOPT_ESH)) && tst $LINENO <<"!"
+L emacs interrupt character
+
+d 40
+p :test-1:
+w set -o emacs
 
 # \ should escape the interrupt character (usually Ctrl+C)
+p :test-2:
 w true \\\cC
-r true \^C
+r ^:test-2: true \^C
 !
 
 ((SHOPT_VSH)) && touch vi_completion_A_file vi_completion_B_file && tst $LINENO <<"!"

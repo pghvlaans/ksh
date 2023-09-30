@@ -180,6 +180,7 @@ static void setcursor(Emacs_t*,int, int);
 static void show_info(Emacs_t*,const char*);
 static void xcommands(Emacs_t*,int);
 static char blankline(Emacs_t*, genchar*);
+static void dowinch(Emacs_t*);
 
 int ed_emacsread(void *context, int fd,char *buff,int scend, int reedit)
 {
@@ -399,6 +400,7 @@ int ed_emacsread(void *context, int fd,char *buff,int scend, int reedit)
 					beep();
 					continue;
 				}
+				dowinch(ep);
 				ep->mark = i;
 				for(i=eol;i>=cur;i--)
 					out[c+i] = out[i];
@@ -681,6 +683,7 @@ update:
 			hline = location.hist_command;
 			hloff = location.hist_line;
 		common:
+			dowinch(ep);
 #ifdef ESH_NFIRST
 			location.hist_command = hline;	/* save current position */
 			location.hist_line = hloff;
@@ -807,6 +810,7 @@ static int escape(Emacs_t* ep,genchar *out,int count)
 #endif
 
 		case 'p':	/* M-p == ^W^Y (copy stack == kill & yank) */
+			dowinch(ep);
 			ed_ungetchar(ep->ed,cntl('Y'));
 			ed_ungetchar(ep->ed,cntl('W'));
 #ifdef ESH_KAPPEND
@@ -929,6 +933,7 @@ static int escape(Emacs_t* ep,genchar *out,int count)
 
 
 		case '#':
+			dowinch(ep);
 			ed_ungetchar(ep->ed,'\n');
 			ed_ungetchar(ep->ed,(out[0]=='#')?cntl('D'):'#');
 			ed_ungetchar(ep->ed,cntl('A'));
@@ -950,6 +955,7 @@ static int escape(Emacs_t* ep,genchar *out,int count)
 				beep();
 				return -1;
 			}
+			dowinch(ep);
 			ep->mark = cur;
 			gencpy(name,&out[cur]);
 			while(*ptr)
@@ -974,6 +980,7 @@ static int escape(Emacs_t* ep,genchar *out,int count)
 				beep();
 				return -1;
 			}
+			dowinch(ep);
 			savecur = cur;
 			while(isword(cur))
 				cur++;
@@ -1301,6 +1308,7 @@ static void xcommands(Emacs_t *ep,int count)
 			{
 				char hbuf[MAXLINE];
 
+				dowinch(ep);
 				strcpy(hbuf, "Current command ");
 				strcat(hbuf, itos(hline));
 				if (hloff)
@@ -1329,6 +1337,7 @@ static void xcommands(Emacs_t *ep,int count)
 			{
 				char debugbuf[MAXLINE];
 
+				dowinch(ep);
 				strcpy(debugbuf, "count=");
 				strcat(debugbuf, itos(count));
 				strcat(debugbuf, " eol=");
@@ -1409,6 +1418,7 @@ static void search(Emacs_t* ep,genchar *out,int direction)
 	/* save current line */
 	int sav_cur = cur;
 	int backwards_search = ep->prevdirection == -3;
+	dowinch(ep);
 	genncpy(str_buff,string,sizeof(str_buff)/sizeof(*str_buff));
 	string[0] = '^';
 	string[1] = 'R';
@@ -1683,7 +1693,7 @@ static void draw(Emacs_t *ep,Draw_t option)
 	
 	/* Update screen overflow indicator if need be */
 	
-	if (longline != ep->overflow)
+	if (longline != ep->overflow && !ep->ed->e_winched)
 	{
 		setcursor(ep,w_size,longline);
 		ep->overflow = longline;
@@ -1756,5 +1766,17 @@ static char blankline(Emacs_t *ep, genchar *out)
 			return 0;
 	}
 	return 1;
+}
+
+/*
+ * perform the winch procedure if necessary
+ */
+static void dowinch(Emacs_t *ep)
+{
+	if(!ep->ed->e_multiline && !ep->ed->e_winched)
+	{
+		sh.winch = 1;
+		ep->ed->e_winched = 1;
+	}
 }
 #endif /* !SHOPT_ESH */
