@@ -1860,6 +1860,8 @@ static void refresh(Vi_t* vp, int mode)
 		else
 			vp->long_char = '*';
 	}
+	else if ( last_phys >= w_size )
+		dowinch(vp);
 	else
 		vp->long_char = ' ';
 
