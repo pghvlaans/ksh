@@ -1678,14 +1678,14 @@ static void draw(Emacs_t *ep,Draw_t option)
 	
 	********************/
 	
-	if (nscend >= &nscreen[ep->offset+w_size] && ep->ed->e_winched)
+	if (nscend >= &nscreen[ep->offset+w_size])
 	{
 		if (ep->offset > 0)
 			longline = BOTH;
 		else
 			longline = UPPER;
 	}
-	else
+	else 
 	{
 		if (ep->offset > 0)
 			longline = LOWER;
@@ -1693,7 +1693,7 @@ static void draw(Emacs_t *ep,Draw_t option)
 	
 	/* Update screen overflow indicator if need be */
 	
-	if (longline != ep->overflow)
+	if (longline != ep->overflow && !ep->ed->e_winched)
 	{
 		setcursor(ep,w_size,longline);
 		ep->overflow = longline;
