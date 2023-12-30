@@ -62,9 +62,7 @@ One line screen editor for any program
 #include	"shopt.h"
 #include	<ast.h>
 
-#if !SHOPT_ESH
-NoN(emacs)
-#else
+#if SHOPT_ESH
 
 #include	<releaseflags.h>
 #include	"defs.h"
@@ -1781,4 +1779,7 @@ static void dowinch(Emacs_t *ep)
 		ep->ed->e_winched = 1;
 	}
 }
-#endif /* !SHOPT_ESH */
+
+#else
+NoN(emacs)
+#endif /* SHOPT_ESH */

@@ -29,9 +29,7 @@
 #include	"shopt.h"
 #include	"defs.h"
 
-#if !SHOPT_VSH
-NoN(vi)
-#else
+#if SHOPT_VSH
 
 #include	"io.h"
 #include	"history.h"
@@ -2697,4 +2695,6 @@ static void dowinch(Vi_t *vp)
 	}
 }
 
-#endif /* !SHOPT_VSH */
+#else
+NoN(vi)
+#endif /* SHOPT_VSH */
