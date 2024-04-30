@@ -240,7 +240,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		arg = (char*)e_defedit;
 		if(*arg!='/')
 		{
-			errormsg(SH_DICT,ERROR_exit(1),"ed not found set FCEDIT");
+			errormsg(SH_DICT,ERROR_exit(1),"vi not found set FCEDIT");
 			UNREACHABLE();
 		}
 	}
