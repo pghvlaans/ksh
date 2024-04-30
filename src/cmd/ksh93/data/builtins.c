@@ -1083,7 +1083,7 @@ const char sh_opthist[]	=
 	"[+>0?An error occurred.]" 
 "}"
 
-"[+SEE ALSO?\bksh\b(1), \bsh\b(1), \bed\b(1)]"
+"[+SEE ALSO?\bksh\b(1), \bsh\b(1), \bvi\b(1)]"
 ;
 #endif /* !SHOPT_SCRIPTONLY */
 
