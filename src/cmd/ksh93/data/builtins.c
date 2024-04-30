@@ -1056,7 +1056,7 @@ const char sh_opthist[]	=
 	"it will default to \b-1\b.]"
 "[+?If no editor is specified, then the editor specified by the \bHISTEDIT\b "
 	"variable will be used if set, or the \bFCEDIT\b variable will be "
-	"used if set, otherwise, \bed\b will be used.]"
+	"used if set, otherwise, \bvi\b will be used.]"
 "[e]:[editor?\aeditor\a specifies the editor to use to edit the history "
 	"command. A value of \b-\b for \aeditor\a is equivalent to "
 	"specifying the \b-s\b option.]"
@@ -1083,7 +1083,7 @@ const char sh_opthist[]	=
 	"[+>0?An error occurred.]" 
 "}"
 
-"[+SEE ALSO?\bksh\b(1), \bsh\b(1), \bed\b(1)]"
+"[+SEE ALSO?\bksh\b(1), \bsh\b(1), \bvi\b(1)]"
 ;
 #endif /* !SHOPT_SCRIPTONLY */
 
