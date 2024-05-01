@@ -33,7 +33,7 @@
 #if !SHOPT_SCRIPTONLY
 
 static void hist_subst(const char*, int fd, char*);
-static int hist_compare(int fdo, int chkfdo);
+static int hist_compare(int fdo, int initial_fdo);
 
 #if 0
     /* for the benefit of the dictionary generator */
@@ -43,9 +43,9 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 {
 	History_t *hp;
 	char *arg;
-	int flag,fdo,chkfdo;
-	Sfio_t *outfile,*chkfile;
-	char *fname,*chkfname;
+	int flag,fdo,initial_fdo;
+	Sfio_t *outfile,*initial_file;
+	char *fname,*initial_fname;
 	int range[2], incr, index2, indx= -1;
 	char ran_editor = 0;	/* editor-called flag */
 	char *edit = 0;		/* name of editor */
@@ -215,18 +215,18 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			errormsg(SH_DICT,ERROR_system(1),e_create,fname);
 			UNREACHABLE();
 		}
-		if(!(chkfname=pathtmp(NULL,0,0,NULL)))
+		if(!(initial_fname=pathtmp(NULL,0,0,NULL)))
 		{
 			errormsg(SH_DICT,ERROR_exit(1),e_create,"");
 			UNREACHABLE();
 		}
-		if((chkfdo=open(chkfname,O_CREAT|O_RDWR,S_IRUSR|S_IWUSR)) < 0)
+		if((initial_fdo=open(initial_fname,O_CREAT|O_RDWR,S_IRUSR|S_IWUSR)) < 0)
 		{
-			errormsg(SH_DICT,ERROR_system(1),e_create,chkfname);
+			errormsg(SH_DICT,ERROR_system(1),e_create,initial_fname);
 			UNREACHABLE();
 		}
 		outfile= sfnew(NULL,sh.outbuff,IOBSIZE,fdo,SFIO_WRITE);
-		chkfile= sfnew(NULL,sh.outbuff,IOBSIZE,chkfdo,SFIO_WRITE);
+		initial_file= sfnew(NULL,sh.outbuff,IOBSIZE,initial_fdo,SFIO_WRITE);
 		arg = "\n";
 		nflag++;
 	}
@@ -236,7 +236,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		{
 			sfprintf(outfile,"%d\t",range[flag]);
 			if(lflag==0)
-				sfprintf(chkfile,"%d\t",range[flag]);
+				sfprintf(initial_file,"%d\t",range[flag]);
 		}
 		else if(lflag)
 			sfputc(outfile,'\t');
@@ -244,21 +244,21 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		if(lflag)
 			sh_sigcheck();
 		else
-			hist_list(sh.hist_ptr,chkfile,hist_tell(sh.hist_ptr,range[flag]),0,arg);
+			hist_list(sh.hist_ptr,initial_file,hist_tell(sh.hist_ptr,range[flag]),0,arg);
 		if(range[flag] == range[1-flag])
 			break;
 		range[flag] += incr;
 	}
 	if(lflag==0)
 	{
-		chkfdo = sh_chkopen(chkfname);
-		unlink(chkfname);
-		free(chkfname);
+		initial_fdo = sh_chkopen(initial_fname);
+		unlink(initial_fname);
+		free(initial_fname);
 	}
 	else
 		return 0;
 	sfclose(outfile);
-	sfclose(chkfile);
+	sfclose(initial_file);
 	hist_eof(hp);
 	arg = edit;
 	if(!arg && !(arg=nv_getval(sh_scoped(HISTEDIT))) && !(arg=nv_getval(sh_scoped(FCEDNOD))))
@@ -289,8 +289,8 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 	if(replace)
 	{
 		hist_subst(error_info.id,fdo,replace);
-		sh_close(chkfdo);
 		sh_close(fdo);
+		sh_close(initial_fdo);
 	}
 	else if(error_info.errors == 0)
 	{
@@ -312,7 +312,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			hist_depth--;
 		}
 		/* run the command post-editor only if it has been changed */
-		else if(hist_compare(fdo,chkfdo))
+		else if(hist_compare(fdo,initial_fdo))
 		{
 			fdo = sh_chkopen(fname);
 			iop = sfnew(NULL,buff,IOBSIZE,fdo,SFIO_READ);
@@ -321,12 +321,12 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		}
 		else
 			sh_close(fdo);
-		sh_close(chkfdo);
+		sh_close(initial_fdo);
 	}
 	else
 	{
 		sh_close(fdo);
-		sh_close(chkfdo);
+		sh_close(initial_fdo);
 		if(!sh_isoption(SH_VERBOSE))
 			sh_offstate(SH_VERBOSE);
 		sh_offstate(SH_HISTORY);
@@ -372,28 +372,28 @@ static void hist_subst(const char *command,int fd,char *replace)
  * check that a change has occurred after viewing the temporary file
  * with the full editor
  */
-static int hist_compare(int fdo, int chkfdo)
+static int hist_compare(int fdo, int initial_fdo)
 {
-	off_t size,chksize;
-	char *string,*chkstring;
-	int c,d,save1,save2;
-	if((size = lseek(fdo,0,SEEK_END)) < 0 || (chksize = lseek(chkfdo,0,SEEK_END)) < 0)
+	off_t size,initial_size;
+	char *string,*initial_string;
+	int c,d;
+	if((size = lseek(fdo,0,SEEK_END)) < 0 || (initial_size = lseek(initial_fdo,0,SEEK_END)) < 0)
 		return 1;
 	lseek(fdo,0,SEEK_SET);
-	lseek(chkfdo,0,SEEK_SET);
+	lseek(initial_fdo,0,SEEK_SET);
 	c = (int)size;
-	d = (int)chksize;
+	d = (int)initial_size;
 	if(c != d)
 		return 1;
 	string = stkalloc(sh.stk,c+1);
-	chkstring = stkalloc(sh.stk,d+1);
-	if(read(fdo,string,c)!=c || read(chkfdo,chkstring,d)!=d)
+	initial_string = stkalloc(sh.stk,d+1);
+	if(read(fdo,string,c)!=c || read(initial_fdo,initial_string,d)!=d)
 		return 1;
 	string[c] = 0;
-	chkstring[c] = 0;
+	initial_string[c] = 0;
 	for(int x=0; x<=c; x++)
 	{
-		if(string[x] != chkstring[x])
+		if(string[x] != initial_string[x])
 			return 1;
 	}
 	return 0;
