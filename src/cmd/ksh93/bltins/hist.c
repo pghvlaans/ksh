@@ -33,6 +33,7 @@
 #if !SHOPT_SCRIPTONLY
 
 static void hist_subst(const char*, int fd, char*);
+static int hist_compare(int fdo, int chkfdo);
 
 #if 0
     /* for the benefit of the dictionary generator */
@@ -42,10 +43,11 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 {
 	History_t *hp;
 	char *arg;
-	int flag,fdo;
-	Sfio_t *outfile;
-	char *fname;
+	int flag,fdo,chkfdo;
+	Sfio_t *outfile,*chkfile;
+	char *fname,*chkfname;
 	int range[2], incr, index2, indx= -1;
+	char ran_editor = 0;	/* editor-called flag */
 	char *edit = 0;		/* name of editor */
 	char *replace = 0;	/* replace old=new */
 	int lflag = 0, nflag = 0, rflag = 0;
@@ -213,26 +215,50 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			errormsg(SH_DICT,ERROR_system(1),e_create,fname);
 			UNREACHABLE();
 		}
+		if(!(chkfname=pathtmp(NULL,0,0,NULL)))
+		{
+			errormsg(SH_DICT,ERROR_exit(1),e_create,"");
+			UNREACHABLE();
+		}
+		if((chkfdo=open(chkfname,O_CREAT|O_RDWR,S_IRUSR|S_IWUSR)) < 0)
+		{
+			errormsg(SH_DICT,ERROR_system(1),e_create,chkfname);
+			UNREACHABLE();
+		}
 		outfile= sfnew(NULL,sh.outbuff,IOBSIZE,fdo,SFIO_WRITE);
+		chkfile= sfnew(NULL,sh.outbuff,IOBSIZE,chkfdo,SFIO_WRITE);
 		arg = "\n";
 		nflag++;
 	}
 	while(1)
 	{
 		if(nflag==0)
+		{
 			sfprintf(outfile,"%d\t",range[flag]);
+			if(lflag==0)
+				sfprintf(chkfile,"%d\t",range[flag]);
+		}
 		else if(lflag)
 			sfputc(outfile,'\t');
 		hist_list(sh.hist_ptr,outfile,hist_tell(sh.hist_ptr,range[flag]),0,arg);
 		if(lflag)
 			sh_sigcheck();
+		else
+			hist_list(sh.hist_ptr,chkfile,hist_tell(sh.hist_ptr,range[flag]),0,arg);
 		if(range[flag] == range[1-flag])
 			break;
 		range[flag] += incr;
 	}
-	if(lflag)
+	if(lflag==0)
+	{
+		chkfdo = sh_chkopen(chkfname);
+		unlink(chkfname);
+		free(chkfname);
+	}
+	else
 		return 0;
 	sfclose(outfile);
+	sfclose(chkfile);
 	hist_eof(hp);
 	arg = edit;
 	if(!arg && !(arg=nv_getval(sh_scoped(HISTEDIT))) && !(arg=nv_getval(sh_scoped(FCEDNOD))))
@@ -251,10 +277,9 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 		com[1] =  fname;
 		com[2] = 0;
 		error_info.errors = sh_eval(sh_sfeval(com),0);
+		ran_editor = 1;
 	}
 	fdo = sh_chkopen(fname);
-	unlink(fname);
-	free(fname);
 	/* don't history fc itself unless forked */
 	error_info.flags |= ERROR_SILENT;
 	if(!sh_isstate(SH_FORKED))
@@ -264,6 +289,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 	if(replace)
 	{
 		hist_subst(error_info.id,fdo,replace);
+		sh_close(chkfdo);
 		sh_close(fdo);
 	}
 	else if(error_info.errors == 0)
@@ -279,17 +305,34 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			errormsg(SH_DICT,ERROR_exit(1),e_toodeep,"history");
 			UNREACHABLE();
 		}
-		iop = sfnew(NULL,buff,IOBSIZE,fdo,SFIO_READ);
-		sh_eval(iop,1); /* this will close fdo */
-		hist_depth--;
+		if(!ran_editor)
+		{
+			iop = sfnew(NULL,buff,IOBSIZE,fdo,SFIO_READ);
+			sh_eval(iop,1); /* this will close fdo */
+			hist_depth--;
+		}
+		/* run the command post-editor only if it has been changed */
+		else if(hist_compare(fdo,chkfdo))
+		{
+			fdo = sh_chkopen(fname);
+			iop = sfnew(NULL,buff,IOBSIZE,fdo,SFIO_READ);
+			sh_eval(iop,1);
+			hist_depth--;
+		}
+		else
+			sh_close(fdo);
+		sh_close(chkfdo);
 	}
 	else
 	{
 		sh_close(fdo);
+		sh_close(chkfdo);
 		if(!sh_isoption(SH_VERBOSE))
 			sh_offstate(SH_VERBOSE);
 		sh_offstate(SH_HISTORY);
 	}
+	unlink(fname);
+	free(fname);
 	return sh.exitval;
 }
 
@@ -323,6 +366,37 @@ static void hist_subst(const char *command,int fd,char *replace)
 	}
 	*(newp-1) =  '=';
 	sh_eval(sfopen(NULL,sp,"s"),1);
+}
+
+/*
+ * check that a change has occurred after viewing the temporary file
+ * with the full editor
+ */
+static int hist_compare(int fdo, int chkfdo)
+{
+	off_t size,chksize;
+	char *string,*chkstring;
+	int c,d,save1,save2;
+	if((size = lseek(fdo,0,SEEK_END)) < 0 || (chksize = lseek(chkfdo,0,SEEK_END)) < 0)
+		return 1;
+	lseek(fdo,0,SEEK_SET);
+	lseek(chkfdo,0,SEEK_SET);
+	c = (int)size;
+	d = (int)chksize;
+	if(c != d)
+		return 1;
+	string = stkalloc(sh.stk,c+1);
+	chkstring = stkalloc(sh.stk,d+1);
+	if(read(fdo,string,c)!=c || read(chkfdo,chkstring,d)!=d)
+		return 1;
+	string[c] = 0;
+	chkstring[c] = 0;
+	for(int x=0; x<=c; x++)
+	{
+		if(string[x] != chkstring[x])
+			return 1;
+	}
+	return 0;
 }
 
 #else
