@@ -140,10 +140,6 @@ char e_version[]	= "\n@(#)$Id: Version "
 #define ATTRS		1
 			"s"
 #endif
-#if !_std_malloc && !_AST_std_malloc
-#define ATTRS		1
-			"v"	/* uses vmalloc */
-#endif
 #if ATTRS
 			" "
 #endif
@@ -243,7 +239,8 @@ static noreturn void *nomemory(size_t s)
  */
 void *sh_malloc(size_t size)
 {
-	void *cp = malloc(size);
+	void *cp;
+	cp = malloc(size);
 	if(!cp)
 		nomemory(size);
 	return cp;
@@ -251,7 +248,8 @@ void *sh_malloc(size_t size)
 
 void *sh_realloc(void *ptr, size_t size)
 {
-	void *cp = realloc(ptr, size);
+	void *cp;
+	cp = realloc(ptr, size);
 	if(!cp)
 		nomemory(size);
 	return cp;
@@ -259,7 +257,8 @@ void *sh_realloc(void *ptr, size_t size)
 
 void *sh_calloc(size_t nmemb, size_t size)
 {
-	void *cp = calloc(nmemb, size);
+	void *cp;
+	cp = calloc(nmemb, size);
 	if(!cp)
 		nomemory(size);
 	return cp;
@@ -267,7 +266,8 @@ void *sh_calloc(size_t nmemb, size_t size)
 
 char *sh_strdup(const char *s)
 {
-	char *dup = strdup(s);
+	char *dup;
+	dup = strdup(s);
 	if(!dup)
 		nomemory(strlen(s)+1);
 	return dup;
@@ -275,7 +275,8 @@ char *sh_strdup(const char *s)
 
 void *sh_memdup(const void *s, size_t n)
 {
-	void *dup = memdup(s, n);
+	void *dup;
+	dup = memdup(s, n);
 	if(!dup)
 		nomemory(n);
 	return dup;
@@ -283,7 +284,8 @@ void *sh_memdup(const void *s, size_t n)
 
 char *sh_getcwd(void)
 {
-	char *cwd = getcwd(NULL, 0);
+	char *cwd;
+	cwd = getcwd(NULL, 0);
 	if(!cwd && errno==ENOMEM)
 		nomemory(PATH_MAX);
 	return cwd;
@@ -1277,9 +1279,6 @@ Shell_t *sh_init(int argc,char *argv[], Shinit_f userinit)
 	int type = 0;
 	static char *login_files[2];
 	sh_onstate(SH_INIT);
-#if !_std_malloc
-	memfatal();
-#endif
 	n = strlen(e_version);
 	if(e_version[n-1]=='$' && e_version[n-2]==' ')
 		e_version[n-2]=0;
@@ -1686,7 +1685,6 @@ void sh_reinit(void)
 	freeup_tree(sh.var_tree);
 #if SHOPT_STATS
 	free(sh.stats);
-	sh.stats = NULL;
 #endif
 	/* Re-init variables, functions and built-ins */
 	free(sh.bltin_cmds);
@@ -1938,8 +1936,7 @@ static Init_t *nv_init(void)
 	nv_onattr(VERSIONNOD,NV_REF);
 	math_init();
 #if SHOPT_STATS
-	if(!sh.stats)
-		stat_init();
+	stat_init();
 #endif
 	return ip;
 }
@@ -2127,7 +2124,7 @@ Namfun_t	*nv_mapchar(Namval_t *np,const char *name)
 	if(!trans)
 		return NULL;
 	if(!np)
-		return ((Namfun_t*)0) + 1;
+		return ((Namfun_t*)1);  /* non-dereferenceable non-NULL result to use as boolean true */
 	if((low=strcmp(name,e_tolower)) && strcmp(name,e_toupper))
 		n += strlen(name)+1;
 	if(mp)

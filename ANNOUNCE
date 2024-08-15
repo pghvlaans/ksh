@@ -14,6 +14,9 @@ New command line editor features:
   The arrow-up and arrow-down keys now act like PageUp and PageDown, unless
   the new --arrowkeysearch option is turned off (see below).
 
+- In the emacs line editor, pressing ^U (kill) twice no longer causes further
+  ^U presses to start a new line (this was a feature for paper terminals).
+
 New shell language features:
 
 - The 'time' reserved word now outputs timings in a precision of 3 digits
@@ -29,6 +32,10 @@ New features in built-in commands:
 
 - A new 'alarm' built-in command allows executing any commands at regular
   intervals. TODO: https://github.com/ksh93/ksh/issues/422
+
+- The 'hash' and 'alias -t' commands now issue an error message for each
+  command given that was not found on PATH, and return a non-zero exit
+  status if any of the commands given were not found.
 
 New features in shell options:
 

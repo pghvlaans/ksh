@@ -260,4 +260,17 @@ case $'\n'${ builtin;}$'\n' in
 esac
 
 # ======
+# https://github.com/ksh93/ksh/issues/728
+got=$(PATH=/opt/ast/bin; PATH=$(getconf PATH); "$SHELL" -c 'builtin basename; namespace ns { basename --version; }' 2>&1)
+exp='  version         basename (*) ????-??-??'
+[[ $got == $exp ]] || err_exit "optional builtin not found when run from namespace" \
+	"(expected match of $(printf %q "$exp"), got $(printf %q "$got"))"
+
+# ======
+got=$("$SHELL" -c 'namespace foo { echo OK | read _DeFiNiTeLy_nOnExIsTeNt_vAr_; }' 2>&1) ||
+	err_exit "read fails in namespace (got $(printf %q "$got"))"
+got=$("$SHELL" -c 'namespace foo { export "_dEfInItElY_NoNeXiStEnT_VaR_=1"; }' 2>&1) ||
+	err_exit "export with quoted assignment-argument fails in namespace (got $(printf %q "$got"))"
+
+# ======
 exit $((Errors<125?Errors:125))

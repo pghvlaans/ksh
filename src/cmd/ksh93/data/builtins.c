@@ -174,9 +174,6 @@ const struct shtable3 shtab_builtins[] =
 	CMDLIST(ln)
 	CMDLIST(mktemp)
 	CMDLIST(mv)
-#if !_std_malloc && !_AST_std_malloc
-	CMDLIST(vmstate)  /* vmstate only works with vmalloc */
-#endif
 #endif
 #if SHOPT_REGRESS
 	"__regress__",		NV_BLTIN|BLT_ENV,	bltin(__regress__),
@@ -321,8 +318,7 @@ const char sh_set[] =
  * --posix is an AST optget(3) default option, so for ksh to use it, it must be listed
  * explicitly (and handled by sh_argopts() in sh/args.c) to stop optget(3) overriding it.
  */
-"[05:posix?Enable the \bposix\b option. When given at invocation time, "
-	"disables importing variable type attributes from the environment.]"
+"[05:posix?Enable the \bposix\b option.]"
 "[p?Privileged mode. Disabling \b-p\b sets the effective user ID to the "
 	"real user ID, and the effective group ID to the real group ID. "
 	"Enabling \b-p\b restores the effective user and group IDs to their "
@@ -413,9 +409,7 @@ const char sh_optalias[] =
 	"be executed before the command that references the alias is read.]"
 "[p?Causes the output to be in the form of alias commands that can be used "
 	"as input to the shell to recreate the current aliases.]"
-"[t?Each \aname\a is looked up as a command in \b$PATH\b and its path is "
-	"added to the hash table as a 'tracked alias'. If no \aname\a is "
-	"given, this prints the hash table. See \bhash(1)\b.]"
+"[t?Same as \bhash\b(1).]"
 "[x?This option is obsolete. In most contexts the \b-x\b option is ignored, "
 	"although when it's combined with \b-t\b it will make \balias\b do "
 	"nothing.]"
@@ -998,14 +992,15 @@ _JOB_
 ;
 
 const char sh_opthash[] =
-"[-1c?\n@(#)$Id: hash (ksh 93u+m) 2021-01-07 $\n]"
+"[-1c?\n@(#)$Id: hash (ksh 93u+m) 2024-06-30 $\n]"
 "[--catalog?" SH_DICT "]"
 "[+NAME?hash - display the locations of recently used programs]"
 "[+DESCRIPTION?\bhash\b displays or modifies the hash table with the "
 	"locations of recently used programs. If given no arguments, it lists "
 	"all command/path associations (a.k.a. 'tracked aliases') in the hash "
 	"table. Otherwise, \bhash\b performs a \bPATH\b search for each "
-	"\autility\a supplied and adds the result to the hash table.]"
+	"\autility\a supplied and adds the result to the hash table. "
+	"An error is issued for each \autility\a that is not found.]"
 "[r?Empty the hash table. This can also be achieved by resetting \bPATH\b.]"
 "\n"
 "\n[utility...]\n"
@@ -1257,7 +1252,7 @@ const char sh_optprint[] =
 ;
 
 const char sh_optprintf[] =
-"[-1c?\n@(#)$Id: printf (ksh 93u+m) 2024-02-11 $\n]"
+"[-1c?\n@(#)$Id: printf (ksh 93u+m) 2024-07-31 $\n]"
 "[--catalog?" SH_DICT "]"
 "[+NAME?printf - write formatted output]"
 "[+DESCRIPTION?\bprintf\b writes each \astring\a operand to "
@@ -1389,7 +1384,8 @@ const char sh_optprintf[] =
 	"[+-?The escape sequence \b\\C[.\b\aname\a\b.]]\b expands to "
 		"the collating element \aname\a.]"
 	"[+-?The escape sequence \b\\x{\b\ahex\a\b}\b expands to the "
-		"character corresponding to the hexadecimal value \ahex\a.]"
+		"single-byte character corresponding to the one- or "
+		"two-digit hexadecimal value \ahex\a.]"
 	"[+-?The escape sequence \b\\u{\b\ahex\a\b}\b expands to the unicode "
 		"character corresponding to the hexadecimal value \ahex\a.]"
 	"[+-?The format modifier flag \b=\b can be used to center a field to "
@@ -1744,7 +1740,7 @@ const char sh_optshift[] =
 	"positional parameters remaining will be reduced by the "
 	"number of places that are shifted.]" 
 "[+?If \an\a is given, it will be evaluated as an arithmetic expression "
-	"to determinate the number of places to shift. It is an error "
+	"to determine the number of places to shift. It is an error "
 	"to shift more than the number of positional parameters or a "
 	"negative number of places.]"
 "\n"
@@ -1850,10 +1846,10 @@ const char sh_opttypeset[] =
 "[+NAME?typeset - declare or display variables with attributes]"
 "[+DESCRIPTION?Without the \b-f\b option, \btypeset\b sets, unsets, "
 	"or displays attributes of variables as specified with the "
-	"options. If the first option is specified with a \b-\b "
+	"options. If the first option is specified with a \b-\b, "
 	"then the attributes are set for each of the given \aname\as. "
 	"If the first option is specified with a \b+\b, then the specified "
-	"attributes are unset. If \b=\b\avalue\a is specified value is "
+	"attributes are unset. If \b=\b\avalue\a is specified, \avalue\a is "
 	"assigned before the attributes are set.]"
 "[+?When \btypeset\b is called inside a function defined with the "
 	"\bfunction\b reserved word, and \aname\a does not contain a "
@@ -1870,9 +1866,9 @@ const char sh_opttypeset[] =
 	"[+integer?\btypeset -li\b]"
 	"[+nameref?\btypeset -n\b]"
 "}"
-"[+?If no \aname\as are specified then variables that have the specified "
+"[+?If no \aname\as are specified, then variables that have the specified "
 	"options are displayed. If the first option is specified with "
-	"a leading \b-\b then the name and value of each variable is "
+	"a leading \b-\b, then the name and value of each variable is "
 	"written to standard output. Otherwise, only the names are "
 	"written. If no options are specified or just \b-p\b is "
 	"specified, then the names and attributes of all variables that have "
@@ -1942,14 +1938,14 @@ const char sh_opttypeset[] =
 	"UNIX format pathname will cause it to be converted to a pathname "
 	"suitable for the current host. This has no effect when the "
 	"native system is UNIX.]"
-"[L]#?[n?Left justify. If \an\a is given it represents the field width. If "
+"[L]#?[n?Left justify. If \an\a is given, it represents the field width. If "
 	"the \b-Z\b attribute is also specified, then leading zeros are "
 	"stripped.]"
 "[M]:?[mapping?\amapping\a is the name of a character mapping known by "
 	"\bwctrans\b(3) such as \btolower\b or \btoupper\b. When the option "
 	"value \bmapping\b is omitted and there are no operands, all mapped "
 	"variables are displayed.]"
-"[R]#?[n?Right justify. If \an\a is given it represents the field width. If "
+"[R]#?[n?Right justify. If \an\a is given, it represents the field width. If "
 	"the \b-Z\b attribute is also specified, then zeros will "
 	"be used as the fill character. Otherwise, spaces are used.]"
 "[X]#?[n:=2*sizeof(long long)?Floating point number represented in hexadecimal "
@@ -1963,7 +1959,7 @@ const char sh_opttypeset[] =
 	"will have function static scope. Otherwise, the variable is "
 	"unset prior to processing the assignment list.]"
 "[T]:?[tname?\atname\a is the name of a type name given to each \aname\a.]"
-"[Z]#?[n?Zero fill. If \an\a is given it represents the field width.]"
+"[Z]#?[n?Zero fill. If \an\a is given, it represents the field width.]"
 "\n"
 "\n[name[=value]...]\n"
 " -f [-tu] [name...]\n"

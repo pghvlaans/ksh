@@ -88,6 +88,23 @@ checksh()
 	"$1" -c "$min_posix" 2>/dev/null || return 1
 }
 
+# simple shell-quoting function
+# usage: shellquote VARNAME
+# NOTE: a valid variable name is assumed
+shellquote()
+{
+	eval "_q_=\${$1}"
+	case ${_q_} in
+	*\'*)	# change every ' to '\''
+		# protect final linefeeds from being stripped by the $(comsub) by adding a trailing X
+		_q_=$(printf '%sX' "${_q_}" | sed "s/'/'\\\\''/g") || exit
+		# remove the trailing X
+		_q_=${_q_%X} ;;
+	esac
+	# add leading/trailing ' and store back in given variable
+	eval "$1=\\'\${_q_}\\'"
+}
+
 LC_ALL=C
 export LC_ALL
 
@@ -97,7 +114,6 @@ export TMPDIR
 src="cmd contrib etc lib"
 use="/usr/common /exp /usr/local /usr/add-on /usr/addon /usr/tools /usr /opt"
 usr="/home"
-lib="" # need /usr/local/lib /usr/local/shlib
 ccs="/usr/kvm /usr/ccs/bin"
 org="gnu GNU"
 makefiles="Mamfile"  # ksh 93u+m no longer uses these: Nmakefile nmakefile Makefile makefile
@@ -115,7 +131,7 @@ command=${0##*/}
 case $(getopts '[-][123:xyz]' opt --xyz 2>/dev/null; echo 0$opt) in
 0123)	USAGE=$'
 [-?
-@(#)$Id: '$command$' (ksh 93u+m) 2024-04-02 $
+@(#)$Id: '$command$' (ksh 93u+m) 2024-08-09 $
 ]
 [-author?Glenn Fowler <gsf@research.att.com>]
 [-author?Contributors to https://github.com/ksh93/ksh]
@@ -548,7 +564,7 @@ SEE ALSO
   pkgadd(1), pkgmk(1), rpm(1), sh(1), tar(1), optget(3)
 
 IMPLEMENTATION
-  version         package (ksh 93u+m) 2024-04-02
+  version         package (ksh 93u+m) 2024-08-09
   author          Glenn Fowler <gsf@research.att.com>
   author          Contributors to https://github.com/ksh93/ksh
   copyright       (c) 1994-2012 AT&T Intellectual Property
@@ -624,51 +640,59 @@ assign=
 assign_CCFLAGS=
 for i
 do	case $i in
-	*:*=*)	args="$args $i"
-		continue
-		;;
-	*=*)	n=${i%%=*} v=${i#*=}
-		;;
-	esac
-	case $i in
-	AR=*|LD=*|NM=*)
-		assign="$assign $n='$v'"
-		eval $n='$'v
-		;;
-	CC=*)	eval $n='$'v
-		;;
-	CCFLAGS=*)
-		eval $n='$'v
-		assign_CCFLAGS="CCFLAGS=\"\$CCFLAGS\""
-		;;
-	HOSTTYPE=*)
-		eval $n='$'v
-		case $HOSTTYPE in
-		?*)	KEEP_HOSTTYPE=1 ;;
-		esac
-		;;
-	PACKAGEROOT=*)
-		eval $n='$'v
-		case $PACKAGEROOT in
-		?*)	KEEP_PACKAGEROOT=1 ;;
-		esac
-		;;
-	SHELL=*)eval $n='$'v
-		case $SHELL in
-		?*)	KEEP_SHELL=2 ;;
-		esac
-		;;
-	VPATH=*)eval USER_$n='$'v
-		;;
 	'debug=1')
 		makeflags="$makeflags --debug-symbols -e"
 		;;
 	'strip=1')
 		makeflags="$makeflags --strip-symbols"
 		;;
-	*=*)	assign="$assign $n='$v'"
+	*=*)	# treat as assignment if the variable name is valid
+		n=${i%%=*} v=${i#*=}
+		case $n in
+		[!A-Za-z_]* | *[!A-Za-z0-9_]*)
+			# if not, it's just a regular argument
+			shellquote i
+			args="$args $i"
+			;;
+		esac
+		vq=$v
+		shellquote vq
+		case $n in
+		AR | LD | NM)
+			assign="$assign $n=$vq"
+			eval "$n=\$v"
+			;;
+		CC)	eval "$n=\$v"
+			;;
+		CCFLAGS)
+			eval "$n=\$v"
+			assign_CCFLAGS="CCFLAGS=\"\$CCFLAGS\""
+			;;
+		HOSTTYPE)
+			eval "$n=\$v"
+			case $HOSTTYPE in
+			?*)	KEEP_HOSTTYPE=1 ;;
+			esac
+			;;
+		PACKAGEROOT)
+			eval "$n=\$v"
+			case $PACKAGEROOT in
+			?*)	KEEP_PACKAGEROOT=1 ;;
+			esac
+			;;
+		SHELL)	eval "$n=\$v"
+			case $SHELL in
+			?*)	KEEP_SHELL=2 ;;
+			esac
+			;;
+		VPATH)	eval "USER_$n=\$v"
+			;;
+		*)	assign="$assign $n=$vq"
+			;;
+		esac
 		;;
-	*)	args="$args $i"
+	*)	shellquote i
+		args="$args $i"
 		;;
 	esac
 done
@@ -1791,7 +1815,7 @@ host)	eval u=$package_use
 		fi
 		;;
 	esac
-	hostinfo $args
+	eval "hostinfo $args"
 	echo $_hostinfo_
 	exit 0
 	;;
@@ -1804,10 +1828,10 @@ export|setup|use)
 	$PACKAGE_USE)
 		case :$PATH: in
 		*:$INSTALLROOT/bin:*)
-			case $LIBPATH: in
-			$INSTALLROOT/bin:$INSTALLROOT/lib:*)
-				case $SHLIB_PATH: in
-				$INSTALLROOT/lib:*)
+			case $LD_LIBRARY_PATH: in
+			$INSTALLROOT/dyn/lib:*)
+				case $DYLD_LIBRARY_PATH: in
+				$INSTALLROOT/dyn/lib:*)
 					x=1
 					;;
 				esac
@@ -1832,7 +1856,7 @@ case $x in
 			case $show in
 			echo)	exec=echo make=echo show=echo ;;
 			esac
-			set -- $args
+			eval "set -- $args"
 			case $# in
 			0)	;;
 			*)	case $1 in
@@ -2005,143 +2029,71 @@ case $x in
 	EXECTYPE=$HOSTTYPE
 	EXECROOT=$INSTALLROOT
 	case $CROSS in
-	0) 	# dll hackery -- why is this so complicated?
-
-		abi=
-		case $HOSTTYPE in
-		sgi.mips[0123456789]*)
-			x=rld
-			if	executable /lib32/$x || executable /lib64/$x
-			then	case $INSTALLROOT in
-				*/sgi.mips[0123456789]*)
-					u=$(echo $INSTALLROOT | sed -e 's,-[^-/]*$,,' -e 's,.$,,')
-					;;
-				*)	u=
-					;;
-				esac
-				for a in "n=2 v= l=" "n=3 v=N32 l=lib32" "n=4-n32 v=N32 l=lib32" "n=4 v=64 l=lib64"
-				do	eval $a
-					case $v in
-					N32)	case $n:$HOSTTYPE in
-						*-n32:*-n32)	;;
-						*-n32:*)	continue ;;
-						*:*-n32)	continue ;;
-						esac
-						;;
-					esac
-					case $l in
-					?*)	if	executable ! /$l/$x
-						then	continue
-						fi
-						;;
-					esac
-					case $u in
-					'')	case $HOSTTYPE in
-						sgi.mips$n|sgi.mips$n-*)
-							abi="$abi 'd=$INSTALLROOT v=$v'"
-							;;
-						*)	continue
-							;;
-						esac
-						;;
-					*)	if	test -d $u$n
-						then	abi="$abi 'd=$u$n v=$v'"
-						fi
-						;;
-					esac
-				done
-			fi
-			;;
-		esac
-		case $abi in
-		'')	abi="'d=$INSTALLROOT v='" ;;
-		esac
-		p=0
-		eval "
-			for a in $abi
-			do	eval \$a
-				eval \"
-					case \\\$LD_LIBRARY\${v}_PATH: in
-					\\\$d/dyn/lib:*)
-						;;
-					*)	x=\\\$LD_LIBRARY\${v}_PATH
-						case \\\$x in
-						''|:*)	;;
-						*)	x=:\\\$x ;;
-						esac
-						LD_LIBRARY\${v}_PATH=\$d/dyn/lib\\\$x
-						export LD_LIBRARY\${v}_PATH
-						p=1
-						;;
-					esac
-				\"
-			done
-		"
-		case $LD_LIBRARY_PATH in
-		'')	;;
-		*)	for d in $lib
-			do	case $HOSTTYPE in
-				*64)	if	test -d ${d}64
-					then	d=${d}64
-					fi
-					;;
-				esac
-				case :$LD_LIBRARY_PATH: in
-				*:$d:*)	;;
-				*)	if	test -d $d
-					then	LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$d
-						p=1
-					fi
-					;;
-				esac
-			done
-			;;
-		esac
-		case $p in
-		1)	$show LD_LIBRARY_PATH=$LD_LIBRARY_PATH
-			$show export LD_LIBRARY_PATH
-			export LD_LIBRARY_PATH
-			;;
-		esac
-		case $LIBPATH: in
-		$INSTALLROOT/dyn/bin:$INSTALLROOT/dyn/lib:*)
-			;;
-		*)	case $LIBPATH in
-			'')	LIBPATH=/usr/lib:/lib ;;
+	0)	case $action in
+		test | use)
+			# Allow loading dynamic libraries from $INSTALLROOT/dyn/lib by setting library
+			# path variables for various systems; instead of bothering to detect the system,
+			# just set them all. (Note: not needed and potentially harmful while building.)
+			case $LD_LIBRARY_PATH: in
+			$INSTALLROOT/dyn/lib:*)
+				;;
+			*)	LD_LIBRARY_PATH=$INSTALLROOT/dyn/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+				$show LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+				$show export LD_LIBRARY_PATH
+				export LD_LIBRARY_PATH
+				;;
 			esac
-			LIBPATH=$INSTALLROOT/dyn/bin:$INSTALLROOT/dyn/lib:$LIBPATH
-			$show LIBPATH=$LIBPATH
-			$show export LIBPATH
-			export LIBPATH
+			case $LIBPATH: in
+			$INSTALLROOT/dyn/bin:$INSTALLROOT/dyn/lib:*)
+				;;
+			*)	case $LIBPATH in
+				'')	LIBPATH=/usr/lib:/lib ;;
+				esac
+				LIBPATH=$INSTALLROOT/dyn/bin:$INSTALLROOT/dyn/lib:$LIBPATH
+				$show LIBPATH=$LIBPATH
+				$show export LIBPATH
+				export LIBPATH
+				;;
+			esac
+			case $SHLIB_PATH: in
+			$INSTALLROOT/dyn/lib:*)
+				;;
+			*)	SHLIB_PATH=$INSTALLROOT/dyn/lib${SHLIB_PATH:+:$SHLIB_PATH}
+				$show SHLIB_PATH=$SHLIB_PATH
+				$show export SHLIB_PATH
+				export SHLIB_PATH
+				;;
+			esac
+			case $DYLD_LIBRARY_PATH: in
+			$INSTALLROOT/dyn/lib:*)
+				;;
+			*)	DYLD_LIBRARY_PATH=$INSTALLROOT/dyn/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
+				$show DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH
+				$show export DYLD_LIBRARY_PATH
+				export DYLD_LIBRARY_PATH
+				;;
+			esac
+			case $_RLD_ROOT in
+			$INSTALLROOT/arch*)	;;
+			':')	_RLD_ROOT=$INSTALLROOT/arch:/ ;;
+			/|*:/)	_RLD_ROOT=$INSTALLROOT/arch:$_RLD_ROOT ;;
+			*)	_RLD_ROOT=$INSTALLROOT/arch:$_RLD_ROOT:/ ;;
+			esac
+			$show _RLD_ROOT=$_RLD_ROOT
+			$show export _RLD_ROOT
+			export _RLD_ROOT
+			# Haiku
+			case $LIBRARY_PATH: in
+			$INSTALLROOT/dyn/lib:*)
+				;;
+			*)	LIBRARY_PATH=$INSTALLROOT/dyn/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
+				$show LIBRARY_PATH=$LIBRARY_PATH
+				$show export LIBRARY_PATH
+				export LIBRARY_PATH
+				;;
+			esac
 			;;
 		esac
-		case $SHLIB_PATH: in
-		$INSTALLROOT/dyn/lib:*)
-			;;
-		*)	SHLIB_PATH=$INSTALLROOT/dyn/lib${SHLIB_PATH:+:$SHLIB_PATH}
-			$show SHLIB_PATH=$SHLIB_PATH
-			$show export SHLIB_PATH
-			export SHLIB_PATH
-			;;
-		esac
-		case $DYLD_LIBRARY_PATH: in
-		$INSTALLROOT/dyn/lib:*)
-			;;
-		*)	DYLD_LIBRARY_PATH=$INSTALLROOT/dyn/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
-			$show DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH
-			$show export DYLD_LIBRARY_PATH
-			export DYLD_LIBRARY_PATH
-			;;
-		esac
-		case $_RLD_ROOT in
-		$INSTALLROOT/arch*)	;;
-		':')	_RLD_ROOT=$INSTALLROOT/arch:/ ;;
-		/|*:/)	_RLD_ROOT=$INSTALLROOT/arch:$_RLD_ROOT ;;
-		*)	_RLD_ROOT=$INSTALLROOT/arch:$_RLD_ROOT:/ ;;
-		esac
-		$show _RLD_ROOT=$_RLD_ROOT
-		$show export _RLD_ROOT
-		export _RLD_ROOT
 
 		# now set up PATH
 		#
@@ -2289,7 +2241,7 @@ esac
 
 PACKAGEBIN=$INSTALLROOT/lib/package
 case $action:$run in
-use:-)	set -- $args
+use:-)	eval "set -- $args"
 	case $# in
 	0)	;;
 	*)	shift ;;
@@ -2402,28 +2354,29 @@ view() # [test] [-|type] [src|bin|all] file
 	return 1
 }
 
-# determine the package and targets
+# determine the targets
 
-case $action in
-*)	package=
-	target=
-	set -- $args
-	while	test "$#" -gt 0
-	do	case $1 in
-		''|-)	target="$target $package"
-			package=
-			;;
-		*)	if	view - src "lib/package/$1.pkg"
-			then	package="$package $1"
-			else	target="$target $package $1"
-				package=
-			fi
-			;;
-		esac
-		shift
-	done
-	;;
-esac
+eval "set -- $args"
+# skip and save mamake(1) options in makeflags
+# (if mamake learns/forgets an option, replace the option string below with the output of 'mamake --posix')
+OPTIND=1 target=
+while	getopts 'cef:ij:knr:C:D:FNVGS' o
+do	case $o in
+	'?')	exit 2
+		;;
+	f | j | r | C | D)
+		shellquote OPTARG
+		makeflags="$makeflags -$o $OPTARG"
+		;;
+	*)	makeflags="$makeflags -$o"
+		;;
+	esac
+done
+shift $((OPTIND - 1))
+for	i
+do	shellquote i
+	target="$target $i"
+done
 
 # check that cmd args are up to date a.out's
 
@@ -2505,7 +2458,17 @@ checkaout()	# cmd ...
 				done
 			fi
 			rm -f "$INSTALLROOT/dyn/bin/$i" "$INSTALLROOT/src/lib/libast/$i" &
-			$exec $CC $CCFLAGS -o $INSTALLROOT/bin/$i $INITROOT/$i.c || return
+			case $HOSTTYPE in
+			cygwin.*)
+				# Windows/Cygwin kills fork(2) after deleting *or* renaming an executable that's in use :-/
+				# To allow relinking the binary against libast later, add a _bootstrap suffix and create
+				# a symlink to it. The symlink can be removed/renamed instead of the _bootstrap binary.
+				$exec $CC -O $CCFLAGS $LDFLAGS -o "$INSTALLROOT/bin/${i}_bootstrap" "$INITROOT/$i.c" || return
+				$exec ln -sf "${i}_bootstrap" "$INSTALLROOT/bin/$i" || return
+				;;
+			*)	$exec $CC -O $CCFLAGS $LDFLAGS -o "$INSTALLROOT/bin/$i" "$INITROOT/$i.c" || return
+				;;
+			esac
 			test -f $i.o && $exec rm -f $i.o
 			hash -r
 			;;
@@ -2521,22 +2484,9 @@ capture() # file command ...
 {
 	tee_pid=
 	case $make:$noexec in
-	:)	case $action in
-		install|make|view)
-			o=$action
-			;;
-		*)	case $package in
-			''|*' '*)
-				o=$action
-				;;
-			*)	o=$package
-				;;
-			esac
-			;;
-		esac
-		d=$PACKAGEBIN/gen
+	:)	d=$PACKAGEBIN/gen
 		test -d $d || $exec mkdir $d
-		o=$d/$o
+		o=$d/$action
 		case $o in
 		$output)o=$o.out
 			s=
@@ -2610,6 +2560,7 @@ capture() # file command ...
 				done
 				;;
 			esac
+			(PS4="$action: executing"; set -o xtrace; : "$@")
 			"$@"
 		} < /dev/null > $o 2>&1
 		;;
@@ -2665,9 +2616,9 @@ do_install() # dir [ command ... ]
 	# and off we go
 	trace mkdir -p "$bindir" "$man1dir" || exit
 	for f
-	do	# macOS throws code signature error if 'cp' overwrites Mach-O binary; must remove first
+	do	# macOS throws code signature error if in-use Mach-O binary is overwritten or deleted; must rename first
 		if	test -e "$bindir/$f"
-		then	rm -f "$bindir/$f" || exit
+		then	trace mv "$bindir/$f" "$bindir/$f.old" || exit
 		fi
 		# install executable
 		if	test -f "dyn/bin/$f"
@@ -2696,16 +2647,16 @@ do_install() # dir [ command ... ]
 	if	test -d "dyn/lib"
 	then	trace mkdir -p "$libdir" "$man3dir" "$includedir"
 		# install libraries
-		# note: to copy symlinks with BSD cp, we need to specify -R as well as -P, contra POSIX
 		set +o noglob
 		for f in dyn/lib/*
 		do	set -o noglob
-			# macOS throws code signature error if 'cp' overwrites Mach-O binary; must remove first
-			if	test -e "$libdir/$f"
-			then	rm -f "$libdir/$f" || exit
+			# macOS throws code signature error if in-use Mach-O binary is overwritten or deleted; must rename first
+			fi=$libdir/${f##*/}
+			if	test -e "$fi" && ! test -L "$fi"
+			then	trace mv "$fi" "$fi.old" || exit
 			fi
-			# to copy symlinks with BSD cp, we need to specify -R as well as -P, contra POSIX
-			trace cp -PR "$f" "$libdir"/
+			# the extra -R is needed as a workaround for /bin/cp to copy a symlink on (at least) macOS 12.7.5
+			trace cp -PR "$f" "$libdir"/ || exit
 		done
 		# install developer stuff
 		test -d "$includedir/ast" && trace rm -rf -- "$includedir/ast"
@@ -2763,7 +2714,7 @@ export)	case $INSTALLROOT in
 	0)	v='$i=' ;;
 	*)	v= ;;
 	esac
-	set -- $target $package
+	eval "set -- $target"
 	test "$#" -eq 0 && set -- $env
 	while	test "$#" -gt 0
 	do	i=$1
@@ -2773,9 +2724,8 @@ export)	case $INSTALLROOT in
 	;;
 
 install)cd $PACKAGEROOT
-	# TODO: breaks on directories with spaces or glob characters; make arguments handling robust
 	test -n "$args" || err_out "Usage: $0 install ROOTDIR [ COMMANDNAME ... ]"
-	capture do_install $args
+	eval "capture do_install $args"
 	;;
 
 make|view)
@@ -3057,39 +3007,6 @@ make|view)
 		;;
 	esac
 
-	# update probe scripts
-
-	i=$INSTALLROOT/bin/mamprobe
-	j=$INITROOT/mamprobe.sh
-	case $(ls -t "$i" "$j" 2>/dev/null) in
-	"$i"*)	;;
-	*)	note "update $i"
-		$exec cp "$j" "$i" || exit
-		$exec chmod +x "$i" || exit
-		;;
-	esac
-
-	for i in lib/probe lib/probe/C lib/probe/C/make
-	do	test -d "$INSTALLROOT/$i" || $exec mkdir "$INSTALLROOT/$i" || exit
-	done
-	i=$INSTALLROOT/lib/probe/C/make/probe
-	j=$INITROOT/C+probe
-	k=$INITROOT/make.probe
-	case $(ls -t "$i" "$j" "$k" 2>/dev/null) in
-	"$i"*)	;;
-	*)	if	test -f "$j" && test -f "$k"
-		then	note "update $i"
-			case $exec in
-			'')	cat "$j" "$k" > $i || exit
-				;;
-			*)	echo "cat $j $k > $i"
-				;;
-			esac
-			$exec chmod +x "$i" || exit
-		fi
-		;;
-	esac
-
 	# initialize mamake
 
 	checkaout mamake || exit
@@ -3107,22 +3024,6 @@ make|view)
 	case $exec in
 	'')	hostinfo name
 		echo "$_hostinfo_" | sed 's,\..*,,' > $PACKAGEBIN/gen/host
-		;;
-	esac
-
-	# separate flags from target list
-
-	case $target in
-	*-*)	a=
-		for t in $target
-		do	case $t in
-			-*)	makeflags="$makeflags $t"
-				;;
-			*)	a="$a $t"
-				;;
-			esac
-		done
-		target=$a
 		;;
 	esac
 
@@ -3177,7 +3078,7 @@ make|view)
 	case $target in
 	'')	target="install" ;;
 	esac
-	eval capture mamake \$makeflags \$noexec \$target $assign
+	eval "capture \$MAMAKE_DEBUG_PREFIX mamake $makeflags \$noexec $target $assign"
 
 	case $HOSTTYPE in
 	darwin.*)
@@ -3221,7 +3122,7 @@ make|view)
 	esac
 	;;
 
-results)set -- $target
+results)eval "set -- $target"
 	def=make
 	dir=$PACKAGEBIN/gen
 	case $verbose in
@@ -3341,7 +3242,7 @@ results)set -- $target
 					case $filter in
 					errors)	$exeg grep -E '^pax:|\*\*\*' $j
 						;;
-					*)	$exec grep -E -iv '^($||[\+\[]|cc[^-:]|kill |make.*(file system time|has been replaced)|so|[0123456789]+ error|uncrate |[0123456789]+ block|ar: creat|iffe: test: |conf: (check|generate|read|probe|test)|[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789]*=|gsf@research|ar:.*warning|cpio:|ld:.*(duplicate symbol|to obtain more information)|[0123456789]*$|(checking|creating|touch) [/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789])| obsolete predefined symbol | is (almost always misused|dangerous|deprecated|not implemented)| trigraph| assigned to | cast .* different size| integer overflow .*<<| optimization may be attained | passed as |::__builtin|^creating.*\.a$|warning.*not optimized|exceeds size thresh|ld:.*preempts|is unchanged|with value >=|(-l|lib)\*|/(ast|sys)/(dir|limits|param|stropts)\.h.*redefined|usage|base registers|`\.\.\.` obsolete'"$i" $j |
+					*)	$exec grep -E -iv '^(# reason:|$||[\+\[]|cc[^-:]|kill |make.*(file system time|has been replaced)|so|[0123456789]+ error|uncrate |[0123456789]+ block|ar: creat|iffe: test: |conf: (check|generate|read|probe|test)|[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789]*=|gsf@research|ar:.*warning|cpio:|ld:.*(duplicate symbol|to obtain more information)|[0123456789]*$|(checking|creating|touch) [/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789])| obsolete predefined symbol | is (almost always misused|dangerous|deprecated|not implemented)| trigraph| assigned to | cast .* different size| integer overflow .*<<| optimization may be attained | passed as |::__builtin|^creating.*\.a$|warning.*not optimized|exceeds size thresh|ld:.*preempts|is unchanged|with value >=|(-l|lib)\*|/(ast|sys)/(dir|limits|param|stropts)\.h.*redefined|usage|base registers|`\.\.\.` obsolete'"$i" $j |
 						$exec grep :
 						;;
 					esac
@@ -3364,9 +3265,9 @@ test)	# run all available default regression tests, using our newly compiled she
 	fi
 	export SHELL
 	set -f
-	set -- ${args:-src}
+	eval "set -- ${args:-src}"
 	cd "$1" || exit
-	capture mamake test
+	capture $MAMAKE_DEBUG_PREFIX mamake test
 	;;
 
 use)	# finalize the environment

@@ -2,11 +2,106 @@ This documents significant changes in the dev branch of ksh 93u+m.
 For full details, see the git log at: https://github.com/ksh93/ksh
 Uppercase BUG_* IDs are shell bug IDs as used by the Modernish shell library.
 
+2024-07-31:
+
+- Fixed a bug where printf %T, after having printed the time in UTC once
+  with the TZ variable set to "UTC", would always print the time in UTC from
+  then on, even if the TZ variable was changed to another time zone.
+  Bug introduced in ksh 93t+ 2009-10-21.
+
+2024-07-26:
+
+- Fixed a regression where a broken pipe signal (SIGPIPE), when occurring in
+  a pipe construct within a subshell, caused incorrect signal handling in the
+  parent/main shell, in some cases causing a script to abort. Bug introduced
+  on 2022-07-02.
+
+- Fixed a bug in the pipefail shell option where the status of a signalled
+  non-rightmost process in a pipeline was just the signal number, instead of
+  that number + 256. Bug introduced in ksh 93u+ 2011-04-15.
+
+2024-07-24:
+
+- Fixed a serious bug in the arithmetic subsystem that was triggered on
+  non-Intel processors (such as ARM): any division of an integer by a
+  negative integer threw a spurious "divide by zero" error. Bug introduced
+  in ksh 93q 2005-01-31.
+
+- Similarly fixed: the return value of the assignment of a negative value to
+  an unsigned integer in an arithmetic expression was always 0 on ARM
+  processors (instead of being equal to the assigned wrapped-around value).
+  Bug introduced by the discipline fix on 2024-01-21.
+
+- [v1.1] In printf formatters and C-style $'quoted' strings, \xNN is now
+  limited to two hexadecimal digits (yielding one byte). For multi-byte
+  characters, \u and \U should be used instead.
+
+2024-07-21:
+
+- Fixed a long-standing parsing bug: a '((' that was unmatched by
+  corresponding closing parentheses and enclosed within a compound command
+  failed to throw a syntax error and could cause the shell to crash.
+
+- [v1.1] In emacs mode, pressing ^U (kill) twice no longer causes further
+  ^U presses to start a new line (this was a feature for paper terminals).
+
+2024-07-18:
+
+- Fixed a regression where 'read' cannot create a previously nonexistent
+  variable when used within a namespace block. Bug introduced on 2023-06-02.
+
+2024-07-17:
+
+- Fixed: if the --posix or --letoctal option was turned on, octal numbers
+  designated by the leading-zero octal prefix enabled by these options but
+  containing the invalid digits 8 or 9 (e.g., $((09)) or let "09") failed
+  to throw an error and were instead incorrectly reinterpreted as decimal.
+
+- Fixed: invalid leading zeros in the '0x' hexadecimal prefix or in ksh
+  arithmetic base specifiers, e.g., 00x2F or 016#2F (instead of 0x2F or 16#2F),
+  failed to throw an arithmetic syntax error.
+
+2024-07-16:
+
+- The history expansion character ('!' by default) is now not processed when
+  immediately following '${'. This makes it psosible to use expansion syntax
+  like ${!varname} and ${!prefix@} on the interactive command line with the
+  histexpand option on; these no longer trigger an "event not found" error.
+
+2024-07-13:
+
+- The shell is now capable of handling more than 32767 simultaneous
+  background jobs, subject to system limitations.
+
+2024-07-02:
+
+- Support for UNC paths (//server/dir) is now enabled by default on Cygwin.
+
+2024-06-30:
+
+- Fixed: the 'hash' and 'alias -t' commands no longer autoload functions
+  from executable files on FPATH as an unintended side effect.
+
+- [v1.1] The 'hash' and 'alias -t' commands now issue an error message for
+  each command given that was not found on PATH, and return a non-zero exit
+  status if any of the commands given were not found.
+
+2024-06-27:
+
+- Fixed: a builtin activated with the 'builtin' command was not found if
+  invoked within a namespace block on the same line as the 'builtin' command.
+
+2024-06-26:
+
+- Fixed: when the --showme option was used with a command containing multiple
+  redirections, only the first redirection was shown, without a newline. This
+  bug was introduced along with --showme in ksh 93s- 2006-09-12.
+
 2024-03-05:
 
 - Fixed a corner case bug causing incorrect field splitting behaviour of a
   repeated whitespace character in the IFS variable. The behaviour was
-  incorrect when the posix option was changed while xtrace was on, and when a
+  incorrect when the posix option was changed while xtrace was on, or when a
   shell discipline function was defined for IFS. Bug introduced on 2022-03-05.
 
 2024-03-03:
@@ -61,7 +156,7 @@ Uppercase BUG_* IDs are shell bug IDs as used by the Modernish shell library.
 - Fixed a crash on redefining an array inherited from the parent environment
   in a subshell.
 
-- Fixed corner case breakage of univese handling in the 'echo' command: it
+- Fixed corner case breakage of universe handling in the 'echo' command: it
   broke when used in a namespace block before being used anywhere else, and
   only if _AST_FEATURES was not exported first. The bug caused _AST_FEATURES to
   be incorrectly placed in that namespace. Bug introduced on 2023-06-02.

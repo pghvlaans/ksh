@@ -353,8 +353,9 @@ retry:
 			}
 			if(fd>=0)
 			{
+				const char *tty;
 				fcntl(fd,F_SETFD,FD_CLOEXEC);
-				const char* tty = ttyname(2);
+				tty = ttyname(2);
 				hp->tty = sh_strdup(tty?tty:"notty");
 				hp->auditfp = sfnew(NULL,NULL,-1,fd,SFIO_WRITE);
 			}
@@ -965,7 +966,7 @@ int hist_copy(char *s1,int size,int command,int line)
 	History_t *hp = sh.hist_ptr;
 	int count = 0;
 	char *const s1orig = s1;
-	char *const s1max = s1 + size;
+	char *const s1max = s1 ? s1 + size : NULL;
 	if(!hp)
 		return -1;
 	hist_seek(hp,command);

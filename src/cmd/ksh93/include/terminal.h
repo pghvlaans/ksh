@@ -36,7 +36,8 @@ extern int	sh_ioctl(int,int,void*,int);
 extern int	sh_tcgetattr(int,struct termios*);
 extern int	sh_tcsetattr(int,int,struct termios*);
 
-#define ioctl(a,b,c)		sh_ioctl(a,b,c,sizeof(c))
+#undef	tcgetattr
+#undef	tcsetattr
 #define tcgetattr(a,b)		sh_tcgetattr(a,b)
 #define tcsetattr(a,b,c)	sh_tcsetattr(a,b,c)
 

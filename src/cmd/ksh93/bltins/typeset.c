@@ -186,7 +186,7 @@ int    b_alias(int argc,char *argv[],Shbltin_t *context)
 	if(flag&NV_TAGGED)
 	{
 		if(xflag)
-			return 0;		/* do nothing for 'alias -tx' */
+			return 0;			/* do nothing for 'alias -tx' */
 		if(tdata.pflag)
 		{
 			troot = sh_subtracktree(0);	/* use existing hash table */
@@ -765,8 +765,12 @@ static int     setall(char **argv,int flag,Dt_t *troot,struct tdata *tp)
 			/* tracked alias */
 			if(troot==sh.track_tree && tp->aflag=='-')
 			{
+				Pathcomp_t *pp;
 				sh_offstate(SH_DEFPATH);  /* 'command -p hash foo' should work to create 'foo=/bin/foo' */
-				path_settrackedalias(name,path_absolute(name,NULL,0));
+				if(!(pp = path_absolute(name,NULL,2)))
+					errormsg(SH_DICT,ERROR_exit(0),e_found,name);
+				path_settrackedalias(name,pp);
+				r |= !pp;
 				continue;
 			}
 			if(troot==sh.alias_tree && sh.subshell && !sh.subshare && strchr(name,'='))

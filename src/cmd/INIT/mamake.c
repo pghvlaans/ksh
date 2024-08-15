@@ -17,7 +17,8 @@
 ***********************************************************************/
 #if __clang__
 #pragma clang diagnostic ignored "-Wparentheses"
-#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
+#elif __GNUC__
+#pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Wparentheses"
 #endif
 
@@ -27,13 +28,14 @@
  * coded for portability
  */
 
-#define RELEASE_DATE "2024-04-02"
+#define RELEASE_DATE "2024-08-12"
 static char id[] = "\n@(#)$Id: mamake (ksh 93u+m) " RELEASE_DATE " $\0\n";
 
 #if _PACKAGE_ast
 
 #include <ast.h>
 #include <error.h>
+#include <sig.h>
 
 static const char usage[] =
 "[-?\n@(#)$Id: mamake (ksh 93u+m) " RELEASE_DATE " $\n]"
@@ -63,12 +65,19 @@ static const char usage[] =
 "[+?\bmamprobe\b(1) is called to probe and generate system specific variable"
 "	definitions. The probe information is regenerated when it is older"
 "	than the \bmamprobe\b command.]"
-"[+?For compatibility with \bnmake\b(1) the \b-K\b option and the"
-"	\brecurse\b and \bcc-*\b command line targets are ignored.]"
+"[c:?Chaotic simultaneous output when executing shell actions in parallel."
+"	See \b-j\b below.]"
 "[e:?Explain reason for triggering action. Ignored if -F is on.]"
 "[f:?Read \afile\a instead of the default.]:[file:=Mamfile]"
 "[i:?Ignore action errors.]"
-"[k:?Continue after error with sibling prerequisites.]"
+"[j:?Execute up to \amaxjobs\a shell actions in parallel."
+"	Unless \b-c\b is given, each shell action's output is saved up and"
+"	then logged in one go when it finishes, avoiding chaotic logs."
+"	Rules with the \bvirtual\b attribute are never run in parallel."
+"	Ignored if \bMAMAKE_STRICT\b is unset or less than 5.]#[maxjobs]"
+"[k:?If an error occurs, keep going and build as much as possible."
+"	Rules that depend on rules that had errors"
+"	will not have their actions executed.]"
 "[n:?Print actions but do not execute. Recursion actions (see \b-r\b) are still"
 "	executed. Use \b-N\b to disable recursion actions too.]"
 "[r:?Recursively make leaf directories matching \apattern\a. Only leaf"
@@ -82,7 +91,6 @@ static const char usage[] =
 "[D:?Set the debug trace level to \alevel\a. Higher levels produce more"
 "	output.]#[level]"
 "[F:?Force all targets to be out of date.]"
-"[K:?Ignored.]"
 "[N:?Like \b-n\b but recursion actions (see \b-r\b) are also disabled.]"
 "[V:?Print the program version and exit.]"
 "[G:debug-symbols?Compile and link with debugging symbol options enabled.]"
@@ -92,14 +100,12 @@ static const char usage[] =
 "\n[ target ... ] [ name=value ... ]\n"
 "\n"
 
-"[+SEE ALSO?\bgmake\b(1), \bmake\b(1), \bmamprobe\b(1),"
-"	\bnmake\b(1), \bsh\b(1)]"
+"[+SEE ALSO?\bmamprobe\b(1), \bsh\b(1)]"
 ;
 
 #else
 
 #define elementsof(x)	(sizeof(x)/sizeof(x[0]))
-#define newof(p,t,n,x)	((p)?(t*)realloc((char*)(p),sizeof(t)*(n)+(x)):(t*)calloc(1,sizeof(t)*(n)+(x)))
 
 /*
  * For compatibility with compiler flags such as -std=c99, feature macros
@@ -159,20 +165,35 @@ static const char usage[] =
 
 #if !_PACKAGE_ast
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#endif
+
+/* assert.h does not play well with libast < 20240811 */
+#if !_PACKAGE_ast || AST_VERSION >= 20240811
+#include <assert.h>
+#else
+#define assert(c)	((void)0)
+#endif
+
+/* backward compat for file offsets */
+#if _POSIX_VERSION < 200112L && !_PACKAGE_ast
+#define off_t		long
+#define fseeko		fseek
+#define ftello		ftell
 #endif
 
 #define delimiter(c)	(isspace(c)||(c)==';'||(c)=='('||(c)==')'||(c)=='`'||(c)=='|'||(c)=='&'||(c)=='=')
 
 #define add(b,c)	(((b)->nxt >= (b)->end) ? append(b, "") : NULL, *(b)->nxt++ = (c))
-#define get(b)		((b)->nxt-(b)->buf)
-#define set(b,o)	((b)->nxt=(b)->buf+(o))
+#define getsize(b)	((b)->nxt-(b)->buf)
+#define setsize(b,o)	((b)->nxt=(b)->buf+(o))
 #define use(b)		(*(b)->nxt=0,(b)->nxt=(b)->buf)
 
 #define CHUNK		4096
 #define KEY(a,b,c,d)	((((unsigned long)(a))<<24)|(((unsigned long)(b))<<16)|(((unsigned long)(c))<<8)|(((unsigned long)(d))))
-#define NOW		((unsigned long)time(NULL))
+#define PARALLEL(r)	(state.maxjobs > 1 && state.strict >= 5 && !((r)->flags & RULE_virtual))
 
 #define RULE_active	0x0001		/* active target		*/
 #define RULE_dontcare	0x0002		/* ok if not found		*/
@@ -180,11 +201,11 @@ static const char usage[] =
 #define RULE_exists	0x0008		/* target file exists		*/
 #define RULE_generated	0x0010		/* generated target		*/
 #define RULE_ignore	0x0020		/* ignore time			*/
-#define RULE_implicit	0x0040		/* implicit prerequisite	*/
-#define RULE_made	0x0080		/* already made			*/
-#define RULE_virtual	0x0100		/* not a file			*/
-#define RULE_notrace	0x0200		/* do not xtrace shell action	*/
-#define RULE_updated	0x0400		/* rule was outdated and remade */
+#define RULE_made	0x0040		/* already made			*/
+#define RULE_virtual	0x0080		/* not a file			*/
+#define RULE_notrace	0x0100		/* do not xtrace shell action	*/
+#define RULE_updated	0x0200		/* rule was outdated and remade */
+#define RULE_preexisted	0x0400		/* the rule's target preexisted	*/
 
 #define STREAM_KEEP	0x0001		/* don't fclose() on pop()	*/
 #define STREAM_MUST	0x0002		/* push() file must exist	*/
@@ -201,9 +222,6 @@ static const char usage[] =
 #endif
 
 struct Rule_s;
-
-typedef struct stat Stat_t;
-typedef FILE Stdio_t;
 
 typedef struct Buf_s			/* buffer stream		*/
 {
@@ -244,28 +262,38 @@ typedef struct Rule_s			/* rule item			*/
 	struct Rule_s	*leaf;		/* recursion leaf alias		*/
 	int		flags;		/* RULE_* flags			*/
 	int		making;		/* currently make()ing		*/
-	unsigned long	time;		/* modification time		*/
-	unsigned long	line;		/* starting line in Mamfile	*/
+	time_t		time;		/* modification time		*/
+	unsigned int	line;		/* starting line in Mamfile	*/
+	unsigned int	endline;	/* ending line in Mamfile	*/
+	pid_t		pid;		/* PID of parallel bg job	*/
+	char		*logtmp;	/* temp file for log output	*/
 } Rule_t;
 
 typedef struct Stream_s			/* input file stream stack	*/
 {
-	Stdio_t		*fp;		/* read stream			*/
+	FILE		*fp;		/* read stream			*/
 	char		*file;		/* stream path			*/
-	unsigned long	line;		/* stream line			*/
+	unsigned int	line;		/* stream line			*/
 	int		flags;		/* stream flags			*/
 } Stream_t;
 
 typedef struct View_s			/* viewpath level		*/
 {
 	struct View_s	*next;		/* next level in viewpath	*/
-	int		node;		/* viewpath node path length	*/
+	size_t		node;		/* viewpath node path length	*/
 #if __STDC_VERSION__ >= 199901L
 	char		dir[];		/* viewpath level dir prefix	*/
 #else
 	char		dir[1];		/* viewpath level dir prefix	*/
 #endif
 } View_t;
+
+typedef struct Makestate_s		/* make() shareable state	*/
+{
+	time_t		modtime;	/* preliminary last-mod time	*/
+	Buf_t		*cmd;		/* shell action			*/
+	List_t		*bg;		/* list of rules with bg jobs	*/
+} Makestate_t;
 
 static struct				/* program state		*/
 {
@@ -285,11 +313,13 @@ static struct				/* program state		*/
 	char		*file;		/* first input file		*/
 	char		*pwd;		/* current directory		*/
 	char		*recurse;	/* recursion pattern		*/
-	char		*shell;		/* ${SHELL}			*/
+	char		*shell;		/* %{SHELL}			*/
+	char		*installroot;	/* %{INSTALLROOT}		*/
 
 	int		active;		/* targets currently active	*/
+	int		chaos;		/* don't save up parallel logs	*/
 	int		debug;		/* negative of debug level	*/
-	int		errors;		/* some error(s) occurred	*/
+	int		exitstatus;	/* > 0 if error(s) occurred	*/
 	int		exec;		/* execute actions		*/
 	int		explain;	/* explain actions		*/
 	int		force;		/* all targets out of date	*/
@@ -299,6 +329,7 @@ static struct				/* program state		*/
 	int		never;		/* never execute		*/
 	int		probed;		/* probe already done		*/
 	int		verified;	/* don't bother with verify()	*/
+	int		jobs, maxjobs;	/* for parallel sh execution	*/
 
 	Stream_t	streams[4];	/* input file stream stack	*/
 	Stream_t	*sp;		/* input stream stack pointer	*/
@@ -307,24 +338,21 @@ static struct				/* program state		*/
 	Buf_t		*shim_buf;	/* shim being built up		*/
 } state;
 
-static unsigned long	make(Rule_t *, int, unsigned long, Buf_t **);
+static void		make(Rule_t*, Makestate_t*);
+static void		exit_wait(int);
 
 static char		mamfile[] = "Mamfile";
 static char		sh[] = "/bin/sh";
 static char		empty[] = "";
 
-static Dict_item_t	*auto_making;	/* ${@} - name of rule being made */
-static Dict_item_t	*auto_prev;	/* ${<} - name of last prerequisite */
-static Dict_item_t	*auto_allprev;	/* ${^} - space-separated names of all prerequisites */
-static Dict_item_t	*auto_updprev;	/* ${?} - space-separated names of updated prerequisites */
+static Dict_item_t	*auto_making;	/* %{@} - name of rule being made */
+static Dict_item_t	*auto_prev;	/* %{<} - name of last prerequisite */
+static Dict_item_t	*auto_allprev;	/* %{^} - space-separated names of all prerequisites */
+static Dict_item_t	*auto_updprev;	/* %{?} - space-separated names of updated prerequisites */
 
 extern char		**environ;
 
 #if !_PACKAGE_ast
-
-#if defined(NeXT) || defined(__NeXT)
-#define getcwd(a,b)	getwd(a)
-#endif
 
 /*
  * emit usage message and exit
@@ -333,13 +361,14 @@ extern char		**environ;
 static void usage(void)
 {
 	fprintf(stderr, "Usage: %s"
-		" [-iknFKNV]"
-		" [-f Mamfile]"
+		" [-ceiknFNVGS]"
+		" [-f file]"
+		" [-j maxjobs]"
 		" [-r pattern]"
 		" [-C directory]"
 		" [-D level]"
-		" [target ...]"
-		" [name=value ...]"
+		" [ target ... ]"
+		" [ name=value ... ]"
 		"\n", state.id);
 	exit(2);
 }
@@ -350,7 +379,7 @@ static void usage(void)
  * output error message identification
  */
 
-static void identify(Stdio_t * sp)
+static void identify(FILE * sp)
 {
 	if (state.directory)
 		fprintf(sp, "%s [%s]: ", state.id, state.directory);
@@ -368,7 +397,7 @@ static void identify(Stdio_t * sp)
  *	>2	exit(level-2)
  */
 
-static void report(int level, char *text, char *item, unsigned long stamp)
+static void report(int level, char *text, char *item, Rule_t *r)
 {
 	int	i;
 
@@ -379,7 +408,7 @@ static void report(int level, char *text, char *item, unsigned long stamp)
 		if (level < 0)
 		{
 			fprintf(stderr, "debug%d: ", level);
-			for (i = 1; i < state.indent; i++)
+			for (i = 0; i < state.indent; i++)
 				fprintf(stderr, "  ");
 		}
 		else
@@ -388,43 +417,71 @@ static void report(int level, char *text, char *item, unsigned long stamp)
 			{
 				if (state.sp->file)
 					fprintf(stderr, "%s: ", state.sp->file);
-				fprintf(stderr, "%ld: ", state.sp->line);
+				/* do not use the current line when reporting an error from a background job */
+				fprintf(stderr, "%u: ", r && r->pid ? r->endline : state.sp->line);
 			}
 			if (level == 1)
 				fprintf(stderr, "warning: ");
-			else if (level > 1)
-				state.errors = 1;
+			else if (level > 1 && !state.exitstatus)
+				state.exitstatus = 1;
 		}
 		if (item)
 			fprintf(stderr, "%s: ", item);
 		fprintf(stderr, "%s", text);
-		if (stamp && state.debug <= -2)
-			fprintf(stderr, " %10lu", stamp);
+		if (r && r->time && state.debug <= -2)
+#if __STDC_VERSION__ >= 199901L
+			fprintf(stderr, " %lld", (long long)r->time);
+#else
+			fprintf(stderr, " %lu", (unsigned long)r->time);
+#endif
 		fprintf(stderr, "\n");
 		if (level > 2)
-			exit(level - 2);
+			exit_wait(level - 2);
 	}
+}
+
+/*
+ * throw error and exit with status 1
+ */
+
+static void error_out(char *text, char *item)
+{
+	report(3, text, item, NULL);
+}
+
+/*
+ * out of memory error with stack trace
+ */
+
+static void out_of_memory(void)
+{
+	report(2, "out of memory", NULL, NULL);
+	abort();
 }
 
 /*
  * don't know how to make or exit code making
  */
 
-static void dont(Rule_t *r, int code, int keepgoing)
+static void error_making(Rule_t *r, int code)
 {
 	identify(stderr);
-	if (!code)
-		report(keepgoing ? 1 : 3, "missing prerequisite", r->name, 0);
+	if (code <= 0)
+	{
+		report(state.keepgoing ? 2 : 3, code ? "target not generated" : "missing prerequisite", r->name, r);
+		code = 1;
+	}
 	else
 	{
 		fprintf(stderr, "*** exit code %d making %s%s\n", code, r->name, state.ignore ? " ignored" : "");
 		unlink(r->name);
 		if (state.ignore)
 			return;
-		if (!keepgoing)
-			exit(1);
-		state.errors = 1;
+		if (!state.keepgoing)
+			exit_wait(code);
 	}
+	if (code > state.exitstatus)
+		state.exitstatus = code;
 	r->flags |= RULE_error;
 }
 
@@ -438,8 +495,8 @@ static Buf_t *buffer(void)
 
 	if (buf = state.old)
 		state.old = state.old->old;
-	else if (!(buf = newof(0, Buf_t, 1, 0)) || !(buf->buf = newof(0, char, CHUNK, 0)))
-		report(3, "out of memory [buffer]", NULL, 0);
+	else if (!(buf = calloc(1, sizeof(Buf_t))) || !(buf->buf = malloc(CHUNK)))
+		out_of_memory();
 	buf->end = buf->buf + CHUNK;
 	buf->nxt = buf->buf;
 	return buf;
@@ -459,17 +516,16 @@ static void drop(Buf_t *buf)
  * append str length n to buffer and return the buffer base
  */
 
-static char *appendn(Buf_t *buf, char *str, int n)
+static char *appendn(Buf_t *buf, char *str, size_t n)
 {
-	int	m;
-	int	i;
+	size_t	m, i;
 
 	if ((n + 1) >= (buf->end - buf->nxt))
 	{
 		i = buf->nxt - buf->buf;
 		m = (((buf->end - buf->buf) + n + CHUNK + 1) / CHUNK) * CHUNK;
-		if (!(buf->buf = newof(buf->buf, char, m, 0)))
-			report(3, "out of memory [buffer resize]", NULL, 0);
+		if (!(buf->buf = realloc(buf->buf, m)))
+			out_of_memory();
 		buf->end = buf->buf + m;
 		buf->nxt = buf->buf + i;
 	}
@@ -499,7 +555,7 @@ static char *append(Buf_t *buf, char *str)
 static char *reduplicate(char *orig, char *s)
 {
 	char	*t;
-	int	n;
+	size_t	n;
 
 	n = strlen(s);
 	if (n == 0)
@@ -509,7 +565,7 @@ static char *reduplicate(char *orig, char *s)
 		return empty;
 	}
 	if (!(t = realloc(orig == empty ? NULL : orig, n + 1)))
-		report(3, "out of memory [duplicate]", s, 0);
+		out_of_memory();
 	strcpy(t, s);
 	return t;
 }
@@ -527,8 +583,8 @@ static Dict_t *dictionary(void)
 {
 	Dict_t	*dict;
 
-	if (!(dict = newof(0, Dict_t, 1, 0)))
-		report(3, "out of memory [dictionary]", NULL, 0);
+	if (!(dict = calloc(1, sizeof(Dict_t))))
+		out_of_memory();
 	return dict;
 }
 
@@ -601,11 +657,9 @@ static Dict_item_t *search(Dict_t *dict, char *name, int create)
 	}
 	else if (create)
 	{
-		if (!(root = newof(0, Dict_item_t, 1, strlen(name) + 1)))
-		{
-			report(3, "out of memory [dictionary]", name, 0);
-			abort();
-		}
+		if (!(root = malloc(sizeof(Dict_item_t) + strlen(name) + 1)))
+			out_of_memory();
+		root->value = NULL;
 		strcpy(root->name, name);
 	}
 	if (root)
@@ -644,16 +698,16 @@ static void *getval(Dict_t *dict, char *name)
  * low level for walk()
  */
 
-static int apply(Dict_t *dict, Dict_item_t *item, int (*func)(Dict_item_t *, void *), void *handle)
+static int apply(Dict_t *dict, Dict_item_t *item, int (*func)(Dict_item_t *))
 {
 	Dict_item_t	*right;
 
 	do
 	{
 		right = item->right;
-		if (item->left && apply(dict, item->left, func, handle))
+		if (item->left && apply(dict, item->left, func))
 			return -1;
-		if ((*func)(item, handle))
+		if ((*func)(item))
 			return -1;
 	} while (item = right);
 	return 0;
@@ -663,9 +717,9 @@ static int apply(Dict_t *dict, Dict_item_t *item, int (*func)(Dict_item_t *, voi
  * apply func to each dictionary item
  */
 
-static int walk(Dict_t *dict, int (*func)(Dict_item_t *, void *), void *handle)
+static int walk(Dict_t *dict, int (*func)(Dict_item_t *))
 {
-	return dict->root ? apply(dict, dict->root, func, handle) : 0;
+	return dict->root ? apply(dict, dict->root, func) : 0;
 }
 
 /*
@@ -679,9 +733,9 @@ static Rule_t *rule(char *name)
 	if (!(r = getval(state.rules, name)))
 	{
 		Dict_item_t *rnode;
-		int n;
-		if (!(r = newof(0, Rule_t, 1, 0)))
-			report(3, "out of memory [rule]", name, 0);
+		size_t n;
+		if (!(r = calloc(1, sizeof(Rule_t))))
+			out_of_memory();
 		rnode = search(state.rules, name, 1);
 		rnode->value = r;
 		r->name = rnode->name;
@@ -708,8 +762,8 @@ static void cons(Rule_t *r, Rule_t *p)
 	for (x = r->prereqs; x && x->rule != p; x = x->next);
 	if (!x)
 	{
-		if (!(x = newof(0, List_t, 1, 0)))
-			report(3, "out of memory [list]", r->name, 0);
+		if (!(x = calloc(1, sizeof(List_t))))
+			out_of_memory();
 		x->rule = p;
 		x->next = r->prereqs;
 		r->prereqs = x;
@@ -724,13 +778,14 @@ static void view(void)
 {
 	char		*s, *t, *p;
 	View_t		*vp, *zp;
-	int		c, n;
-	Stat_t		st, ts;
+	int		c;
+	size_t		n;
+	struct stat	st, ts;
 	char		buf[CHUNK];
 	Dict_item_t	*vnode;
 
 	if (stat(".", &st))
-		report(3, "cannot stat", ".", 0);
+		error_out("cannot stat", ".");
 	vnode = search(state.vars, "PWD", 1);
 	if ((s = vnode->value) && !stat(s, &ts) &&
 	    ts.st_dev == st.st_dev && ts.st_ino == st.st_ino)
@@ -738,7 +793,7 @@ static void view(void)
 	if (!state.pwd)
 	{
 		if (!getcwd(buf, sizeof(buf) - 1))
-			report(3, "cannot determine PWD", NULL, 0);
+			error_out("cannot determine PWD", NULL);
 		state.pwd = duplicate(buf);
 		vnode->value = state.pwd;
 	}
@@ -758,9 +813,9 @@ static void view(void)
 				 */
 
 				if (stat(s, &st))
-					report(3, "cannot stat top view", s, 0);
+					error_out("cannot stat top view", s);
 				if (stat(state.pwd, &ts))
-					report(3, "cannot stat", state.pwd, 0);
+					error_out("cannot stat", state.pwd);
 				if (ts.st_dev == st.st_dev && ts.st_ino == st.st_ino)
 					p = ".";
 				else
@@ -771,10 +826,10 @@ static void view(void)
 						if (*--p == '/')
 						{
 							if (p == state.pwd)
-								report(3, ". not under VPATH", s, 0);
+								error_out(". not under VPATH", s);
 							*p = 0;
 							if (stat(state.pwd, &ts))
-								report(3, "cannot stat", state.pwd, 0);
+								error_out("cannot stat", state.pwd);
 							*p = '/';
 							if (ts.st_dev == st.st_dev && ts.st_ino == st.st_ino)
 							{
@@ -784,19 +839,19 @@ static void view(void)
 						}
 					}
 					if (p <= state.pwd)
-						report(3, "cannot determine viewpath offset", s, 0);
+						error_out("cannot determine viewpath offset", s);
 				}
 			}
 			n = strlen(s);
-			if (!p)
-				abort();
-			if (!(vp = newof(0, View_t, 1, strlen(p) + n + 2)))
-				report(3, "out of memory [view]", s, 0);
+			assert(p);
+			if (!(vp = malloc(sizeof(View_t) + strlen(p) + n + 2)))
+				out_of_memory();
+			vp->next = NULL;
 			vp->node = n + 1;
 			strcpy(vp->dir, s);
 			*(vp->dir + n) = '/';
 			strcpy(vp->dir + n + 1, p);
-			report(-4, vp->dir, "view", 0);
+			report(-4, vp->dir, "view", NULL);
 			if (!state.view)
 				state.view = zp = vp;
 			else
@@ -857,11 +912,14 @@ static void substitute(Buf_t *buf, char *s)
 	int	c, n;
 	int	found_AR = 0;	/* 1 if ${AR} encountered */
 	int	valid_sh_name;	/* if set, the variable name is valid in sh(1) */
+	int	newexp;		/* if set, %{...}, otherwise ${...} */
+	char	*vnterm;	/* pointer to byte following variable name */
 
 	while (c = *s++)
 	{
-		if (c == '$' && *s == '{')
+		if ((c == '%' || (c == '$' && state.strict < 4)) && *s == '{')
 		{
+			newexp = (c == '%');
 			b = s - 1;
 			t = ++s;
 			n = *t == '-' ? 0 : '-';
@@ -870,19 +928,18 @@ static void substitute(Buf_t *buf, char *s)
 				(c != '?' || s == t) &&
 				c != '+' &&
 				c != n &&
-				c != ':' &&
-				c != '=' &&
-				c != '[' &&
+				(c != ':' && c != '=' && c != '[' || newexp) &&
 				c != '}' )
 			{
 				s++;
 				if (!isalnum(c) && c != '_')
 					valid_sh_name = 0;
 			}
+			vnterm = s;
 
 			/* Zero-terminate the variable name */
 
-			*s = 0;
+			*vnterm = 0;
 
 			/* Keep unexpanded if it looks like a ksh array expansion ${var[subscript]} */
 
@@ -915,12 +972,12 @@ static void substitute(Buf_t *buf, char *s)
 
 			/* A really absurd hack, see check for found_AR further below */
 
-			if (strcmp(t, "AR") == 0)
+			if (!newexp && strcmp(t, "AR") == 0)
 				found_AR = 1;
 
 			/* Un-terminate the variable name */
 
-			*s = c;
+			*vnterm = c;
 
 			/* Find the ending '}', dealing with nesting */
 
@@ -939,7 +996,7 @@ static void substitute(Buf_t *buf, char *s)
 			switch (c)
 			{
 			case '?':
-				/* ${variable?c?x?y?} */
+				/* %{variable?c?x?y?} */
 				q = cond(t - 1);
 				if (v)
 				{
@@ -949,7 +1006,7 @@ static void substitute(Buf_t *buf, char *s)
 				else if (q == t)
 					v = s;
 				t = cond(q);
-				if (v)
+				if (v && *v)
 				{
 					if (t > q)
 					{
@@ -973,7 +1030,7 @@ static void substitute(Buf_t *buf, char *s)
 				break;
 			case '+':
 			case '-':
-				/* ${variable+x}, ${variable-x} */
+				/* %{variable+x}, %{variable-x} */
 				if ((v == 0 || *v == 0) == (c == '-'))
 				{
 					c = *s;
@@ -1027,6 +1084,11 @@ static void substitute(Buf_t *buf, char *s)
 						append(buf, v);
 					}
 				}
+				else if (newexp)
+				{
+					*vnterm = 0;
+					error_out("variable not defined", t);
+				}
 				else if (valid_sh_name || state.strict >= 2)
 				{
 					c = *s;
@@ -1059,7 +1121,7 @@ static char *expand(Buf_t *buf, char *s)
  * stat() with .exe check
  */
 
-static char *status(Buf_t *buf, int off, char *path, struct stat *st)
+static char *status(Buf_t *buf, size_t off, char *path, struct stat *st)
 {
 	int	r;
 	char	*s;
@@ -1073,7 +1135,7 @@ static char *status(Buf_t *buf, int off, char *path, struct stat *st)
 		off = 0;
 	}
 	if (off)
-		set(tmp, off);
+		setsize(tmp, off);
 	else
 		append(tmp, path);
 	append(tmp, ".exe");
@@ -1101,11 +1163,12 @@ static char *find(Buf_t *buf, char *file, struct stat *st)
 {
 	char	*s;
 	View_t	*vp;
-	int	node, c, o;
+	int	node, c;
+	size_t	o;
 
 	if (s = status(buf, 0, file, st))
 	{
-		report(-3, s, "find", 0);
+		report(-3, s, "find", NULL);
 		return s;
 	}
 	if (vp = state.view)
@@ -1142,11 +1205,11 @@ static char *find(Buf_t *buf, char *file, struct stat *st)
 					append(buf, "/");
 				}
 				append(buf, file);
-				o = get(buf);
+				o = getsize(buf);
 				s = use(buf);
 				if (s = status(buf, o, s, st))
 				{
-					report(-3, s, "find", 0);
+					report(-3, s, "find", NULL);
 					return s;
 				}
 			} while (vp = vp->next);
@@ -1159,7 +1222,7 @@ static char *find(Buf_t *buf, char *file, struct stat *st)
  * bind r to a file and return the modify time
  */
 
-static unsigned long bindfile(Rule_t *r)
+static void bindfile(Rule_t *r)
 {
 	char		*s;
 	Buf_t		*buf;
@@ -1174,7 +1237,6 @@ static unsigned long bindfile(Rule_t *r)
 		r->flags |= RULE_exists;
 	}
 	drop(buf);
-	return r->time;
 }
 
 /*
@@ -1186,7 +1248,7 @@ static int pop(void)
 	int	r;
 
 	if (!state.sp)
-		report(3, "input stack underflow", NULL, 0);
+		error_out("input stack underflow", NULL);
 	if (!state.sp->fp || (state.sp->flags & STREAM_KEEP))
 		r = 0;
 	else if (state.sp->flags & STREAM_PIPE)
@@ -1204,7 +1266,7 @@ static int pop(void)
  * push file onto the input stack
  */
 
-static int push(char *file, Stdio_t *fp, int flags)
+static int push(char *file, FILE *fp, int flags)
 {
 	char		*path;
 	Buf_t		*buf;
@@ -1213,25 +1275,15 @@ static int push(char *file, Stdio_t *fp, int flags)
 	if (!state.sp)
 		state.sp = state.streams;
 	else if (++state.sp >= &state.streams[elementsof(state.streams)])
-		report(3, "input stream stack overflow", NULL, 0);
+		error_out("input stream stack overflow", NULL);
 	if (state.sp->fp = fp)
-	{
-		if (state.sp->file)
-			free(state.sp->file);
-		state.sp->file = strdup("pipeline");
-		if (!state.sp->file)
-			report(3, "out of memory [push]", NULL, 0);
-	}
+		state.sp->file = reduplicate(state.sp->file, "pipeline");
 	else if (flags & STREAM_PIPE)
-		report(3, "pipe error", file, 0);
+		error_out("pipe error", file);
 	else if (!file || !strcmp(file, "-") || !strcmp(file, "/dev/stdin"))
 	{
 		flags |= STREAM_KEEP;
-		if (state.sp->file)
-			free(state.sp->file);
-		state.sp->file = strdup("/dev/stdin");
-		if (!state.sp->file)
-			report(3, "out of memory [push]", NULL, 0);
+		state.sp->file = reduplicate(state.sp->file, "/dev/stdin");
 		state.sp->fp = stdin;
 	}
 	else
@@ -1240,7 +1292,7 @@ static int push(char *file, Stdio_t *fp, int flags)
 		if (path = find(buf, file, &st))
 		{
 			if (!(state.sp->fp = fopen(path, "r")))
-				report(3, "cannot read", path, 0);
+				error_out("cannot read", path);
 			state.sp->file = reduplicate(state.sp->file, path);
 			drop(buf);
 		}
@@ -1249,7 +1301,7 @@ static int push(char *file, Stdio_t *fp, int flags)
 			drop(buf);
 			pop();
 			if (flags & STREAM_MUST)
-				report(3, "not found", file, 0);
+				error_out("not found", file);
 			return 0;
 		}
 	}
@@ -1264,21 +1316,162 @@ static int push(char *file, Stdio_t *fp, int flags)
 
 static char *input(void)
 {
-	static char	input[8*CHUNK];  /* input buffer */
+	static char	input[CHUNK];  /* input buffer */
 	char		*e;
 
 	if (!state.sp)
-		report(3, "no input file stream", NULL, 0);
-	if (!fgets(input, sizeof(input), state.sp->fp))
+		error_out("no input file stream", NULL);
+	if (!fgets(input, sizeof(input), state.sp->fp) || !*input)
 	{
 		if (ferror(state.sp->fp))
-			report(3, "read error", NULL, 0);
+			error_out("read error", NULL);
 		return NULL;
 	}
-	if (*input && *(e = input + strlen(input) - 1) == '\n')
-		*e = 0;
 	state.sp->line++;
+	if (*(e = input + strlen(input) - 1) == '\n')
+		*e = 0;
+	else if (e == input + sizeof(input) - 2)
+		error_out("line too long", NULL);
 	return input;
+}
+
+/*
+ * nice trace header for shell actions, with optional explanation
+ */
+
+static void print_nice_hdr(Rule_t *r)
+{
+	char	*fname, *rname, *rnamepre, *val;
+	size_t	len;
+	if (!r)
+		return;
+	fname = state.sp->file;
+	rname = r->name;
+	rnamepre = "";
+	/* mamfile path: make relative to %{PACKAGEROOT} */
+	if (*fname == '/'
+	&& (val = getval(state.vars, "PACKAGEROOT")) && (len = strlen(val))
+	&& strncmp(fname, val, len) == 0 && fname[len] == '/' && fname[++len])
+		fname += len;
+	/* rule name: change install root path prefix back to '%{INSTALLROOT}' for brevity */
+	if (*rname == '/'
+	&& (val = getval(state.vars, "INSTALLROOT")) && (len = strlen(val))
+	&& strncmp(rname, val, len) == 0 && rname[len] == '/' && rname[len + 1])
+		rname += len, rnamepre = "%{INSTALLROOT}";
+	fprintf(stderr, "\n# %s: %u-%u: make %s%s\n",
+		fname, r->line, r->endline, rnamepre, rname);
+	/* -e option */
+	if (state.explain)
+		fprintf(stderr, "# reason: target %s\n", \
+			r->flags & RULE_preexisted ? "older than prerequisites" : \
+				r->flags & RULE_virtual ? "is virtual" : "not found");
+}
+
+/*
+ * check and propagate results of shell action
+ */
+
+static void check_shellaction(Rule_t *r, int e)
+{
+	struct stat	fstat;
+	if (e)						/* action failed? */
+		error_making(r, e);
+	else if (r->flags & RULE_virtual)		/* rule does not generate a file? */
+		;
+	else if (status(NULL, 0, r->name, &fstat))	/* target file exists? */
+	{
+		r->time = fstat.st_mtime;
+		r->flags |= RULE_exists;
+	}
+	else if (!(r->flags & RULE_dontcare))
+		error_making(r, -1);			/* "target not generated" */
+	if (e > state.exitstatus)
+		state.exitstatus = e;
+}
+
+/*
+ * convert waitpid(3) termination info to exit status
+ */
+
+static int p_exitstatus(int pstat)
+{
+	if (WIFSIGNALED(pstat))
+		return WTERMSIG(pstat) & 0x80;		/* signal number with 8th bit set (a.k.a. +128) */
+	else if (WIFEXITED(pstat))
+		return WEXITSTATUS(pstat);
+	return 0x80;					/* should not happen */
+}
+
+/*
+ * flag==0: wait for and reap a rule's background process, if one is running
+ * flag==WNOHANG: do nothing if the process is still running
+ */
+
+static void reap(Rule_t *r, int flag)
+{
+	int		pstat;
+
+	if (!r || !r->pid || waitpid(r->pid, &pstat, flag) < 1)
+		return;
+	if (state.debug <= -4)
+	{
+		char b[64];
+		sprintf(b, "reaping PID %lu", (unsigned long)r->pid);
+		report(-4, r->name, b, r);
+	}
+	/* dump saved-up log output */
+	if (r->logtmp)
+	{
+		FILE	*logf;
+		char	b[CHUNK];
+		size_t	s;
+		print_nice_hdr(r);
+		if (!(logf = fopen(r->logtmp, "r")))
+			report(3, r->logtmp, "log gone", r);
+		while ((s = fread(b, 1, CHUNK, logf)) > 0)
+			fwrite(b, 1, s, stdout);
+		fclose(logf);
+		fflush(stdout);
+		unlink(r->logtmp);
+		free(r->logtmp);
+		r->logtmp = NULL;
+	}
+	r->pid = 0;
+	check_shellaction(r, p_exitstatus(pstat));
+	assert(state.jobs > 0);
+	state.jobs--;
+}
+
+/*
+ * reap one rule's bg job (if any) via walk()
+ */
+
+static int wreap(Dict_item_t *item)
+{
+	reap(item->value, 0);
+	return 0;
+}
+
+/*
+ * reap one rule's bg job (if any, and if finished) via walk()
+ */
+
+static int wreap_nowait(Dict_item_t *item)
+{
+	reap(item->value, WNOHANG);
+	return 0;
+}
+
+/*
+ * SIGCHLD handling (initialised in main())
+ * just a dummy to make it not ignored
+ */
+
+static sigset_t empty_sigmask;
+
+static void sigchld_dummy(int sig)
+{
+	assert(sig == SIGCHLD);
 }
 
 /*
@@ -1287,47 +1480,58 @@ static char *input(void)
  * even on systems that otherwise demand #! magic (can you say Cygwin)
  */
 
-static int execute(char *s)
+static int execute(Rule_t *r, char *s)
 {
-	int	stat;
 	pid_t	pid;
+	int	pstat;
 
 	if (!state.shell && (!(state.shell = getval(state.vars, "SHELL")) || !strcmp(state.shell, sh)))
 		state.shell = sh;
 	pid = fork();
 	if (pid < 0)
-		report(3, strerror(errno), "fork() failed", 0);
+		error_out(strerror(errno), "fork() failed");
 	if (pid == 0)
 	{	/* child */
-		report(-5, s, "exec", 0);
+		report(-5, s, "exec", NULL);
 		execl(state.shell, "sh", "-c", s, (char*)0);
 		if (errno == ENOENT)
 			exit(127);
 		exit(126);
 	}
 	/* parent */
-	waitpid(pid, &stat, 0);
-	if (WIFEXITED(stat))
-		return WEXITSTATUS(stat);
-	if (WIFSIGNALED(stat))
-		return WTERMSIG(stat) + 128;
-	return 128;
+	/* run job in background if wanted & possible */
+	if (r && PARALLEL(r))
+	{
+		/* if we're at maxjobs, wait for some to finish */
+		assert(state.jobs <= state.maxjobs);
+		while (state.jobs == state.maxjobs)
+		{
+			sigsuspend(&empty_sigmask);
+			walk(state.rules, wreap_nowait);
+		}
+		/* let it run in parallel */
+		state.jobs++;
+		r->pid = pid;
+		return -1;
+	}
+	/* good old-fashioned sequential execution */
+	waitpid(pid, &pstat, 0);
+	return p_exitstatus(pstat);
 }
 
 /*
  * run action s to update r
  */
 
-static unsigned long run(Rule_t *r, char *s)
+static void run(Rule_t *r, char *s)
 {
 	Rule_t	*q;
 	char	*t;
 	int	c, i, j, x;
-	Stat_t	st;
 	Buf_t	*buf;
 
 	if (r->flags & RULE_error)
-		return r->time;
+		return;
 	buf = buffer();
 	if (!strncmp(s, "mamake -r ", 10))
 	{
@@ -1338,6 +1542,18 @@ static unsigned long run(Rule_t *r, char *s)
 		x = state.exec;
 	if (x)
 	{
+		/* have the shell redirect parallel job output to a temp file */
+		if (PARALLEL(r) && !state.chaos)
+		{
+			static unsigned	serial;
+			char		logtmp[32];
+			sprintf(logtmp, ".mamake.%u.out", serial++);
+			append(buf, "exec >");
+			append(buf, logtmp);
+			append(buf, " 2>&1\n");
+			assert(r->logtmp == NULL);
+			r->logtmp = duplicate(logtmp);
+		}
 		/* stubs for backward compat */
 		if (!state.strict)
 			append(buf,
@@ -1347,7 +1563,7 @@ static unsigned long run(Rule_t *r, char *s)
 		/* find commands in the current working directory first */
 		append(buf,
 			"case $PATH in\n"
-			".:*)	;;\n"
+			".:* | :*)	;;\n"
 			"*)	PATH=.:$PATH;;\n"
 			"esac\n"
 		);
@@ -1374,9 +1590,9 @@ static unsigned long run(Rule_t *r, char *s)
 			/* Also subject the user-set shim to viewpathing
 			 * (plus other code preprended above, but it should not contain anything viewpathable) */
 			char	*pre = use(buf);
-			long	n = strlen(pre);
+			size_t	n = strlen(pre);
 			if (!(tofree = malloc(n + strlen(s) + 1)))
-				report(3, "out of memory [run]", NULL, 0);
+				out_of_memory();
 			strcpy(tofree, pre);
 			strcpy(tofree + n, s);
 			s = tofree;
@@ -1452,68 +1668,19 @@ static unsigned long run(Rule_t *r, char *s)
 	}
 	if (x)
 	{
-		if (c = execute(s))
-			dont(r, c, state.keepgoing);
-		if (status(NULL, 0, r->name, &st))
-		{
-			r->time = st.st_mtime;
-			r->flags |= RULE_exists;
-		}
-		else
-			r->time = NOW;
+		int e = execute(r, s);
+		if (e >= 0)
+			check_shellaction(r, e);
 	}
 	else
 	{
 		fprintf(stdout, "%s\n", s);
 		if (state.debug)
 			fflush(stdout);
-		r->time = NOW;
+		r->time = time(NULL); /* now */
 		r->flags |= RULE_exists;
 	}
 	drop(buf);
-	return r->time;
-}
-
-/*
- * return the full path for s using buf workspace
- */
-
-static char *path(Buf_t *buf, char *s, int must)
-{
-	char	*p, *d, *x, *e;
-	int	c, t, o;
-	Stat_t	st;
-
-	for (e = s; *e && !isspace(*e); e++);
-	t = *e;
-	if ((x = status(buf, 0, s, &st)) && (st.st_mode & (S_IXUSR|S_IXGRP|S_IXOTH)))
-		return x;
-	if (!(p = getval(state.vars, "PATH")))
-		report(3, "variable not defined", "PATH", 0);
-	do
-	{
-		for (d = p; *p && *p != ':'; p++);
-		c = *p;
-		*p = 0;
-		if (*d && (*d != '.' || *(d + 1)))
-		{
-			append(buf, d);
-			add(buf, '/');
-		}
-		*p = c;
-		if (t)
-			*e = 0;
-		append(buf, s);
-		if (t)
-			*e = t;
-		o = get(buf);
-		x = use(buf);
-		if ((x = status(buf, o, x, &st)) && (st.st_mode & (S_IXUSR|S_IXGRP|S_IXOTH)))
-			return x;
-	} while (*p++);
-	if (must)
-		report(3, "command not found", s, 0);
-	return NULL;
 }
 
 /*
@@ -1521,50 +1688,63 @@ static char *path(Buf_t *buf, char *s, int must)
  * done on the first `setv CC ...'
  */
 
-static void probe(void)
+static void probe(Rule_t *r, Makestate_t *stp)
 {
-	char		*cc, *s;
-	unsigned long	h, q;
-	Buf_t		*buf, *pro, *tmp;
+	char		*cc, *s, *cmd;
+	unsigned long	h;
+	time_t		cmd_time, output_time;
+	Buf_t		*buf;
 	struct stat	st;
-
-	static char	let[] = "ABCDEFGHIJKLMNOP";
-	static char	cmd[] = "mamprobe";
+	Rule_t		*mamprobe_r;
 
 	if (!(cc = getval(state.vars, "CC")))
 		cc = "cc";
 	buf = buffer();
-	s = path(buf, cmd, 1);
-	q = stat(s, &st) ? 0 : (unsigned long)st.st_mtime;
-	pro = buffer();
-	s = cc = path(pro, cc, 1);
-	for (h = 0; *s; s++)
+	append(buf, state.installroot), append(buf, "/bin/"), append(buf, "mamprobe");
+	cmd = duplicate(use(buf));
+	/* we may need to wait for mamprobe to be generated */
+	if (mamprobe_r = getval(state.rules, cmd))
+		reap(mamprobe_r, 0);
+	cmd_time = stat(cmd, &st) ? 0 : st.st_mtime;
+	if (stat(cmd, &st) < 0)
+		error_out("not found", cmd);
+	cmd_time = st.st_mtime;
+	/* make a hash from $CC's absolute path */
+	if (*cc != '/')
+	{
+		append(buf, "command -v "), append(buf, cc);
+		push("", popen(use(buf), "r"), STREAM_PIPE);
+		if (!(cc = input()) || *cc != '/')
+			error_out("cc not found", cc);
+		pop();
+	}
+	for (h = 0, s = cc; *s; s++)
 		h = h * 0x63c63cd9L + *s + 0x9c39c33dL;
-	if (!(s = getval(state.vars, "INSTALLROOT")))
-		report(3, "variable must be defined", "INSTALLROOT", 0);
-	append(buf, s);
+	/* use the hash as the file name */
+	append(buf, state.installroot);
 	append(buf, "/lib/probe/C/mam/");
 	for (h &= 0xffffffffL; h; h >>= 4)
-		add(buf, let[h & 0xf]);
+		add(buf, "0123456789ABCDEF"[h & 0xf]);
 	s = use(buf);
-	h = stat(s, &st) ? 0 : (unsigned long)st.st_mtime;
-	if (h < q || !push(s, NULL, 0))
+	/* generate probe info if it is nonexistent or older than mamprobe */
+	output_time = stat(s, &st) ? 0 : st.st_mtime;
+	if (output_time < cmd_time || !push(s, NULL, 0))
 	{
-		tmp = buffer();
+		Buf_t	*tmp = buffer();
 		append(tmp, cmd);
 		add(tmp, ' ');
 		append(tmp, s);
 		add(tmp, ' ');
 		append(tmp, cc);
-		if (execute(use(tmp)))
-			report(3, "cannot generate probe info", s, 0);
+		if (execute(NULL, use(tmp)))
+			error_out("cannot generate probe info", s);
 		drop(tmp);
 		if (!push(s, NULL, 0))
-			report(3, "cannot read probe info", s, 0);
+			error_out("cannot read probe info", s);
 	}
-	drop(pro);
+	free(cmd);
 	drop(buf);
-	make(rule(""), 0, 0, NULL);
+	make(r, stp);
 	pop();
 }
 
@@ -1575,7 +1755,7 @@ static void probe(void)
 static void attributes(Rule_t *r, char *s)
 {
 	char	*t;
-	int	n;
+	size_t	n;
 
 	for (;;)
 	{
@@ -1598,8 +1778,8 @@ static void attributes(Rule_t *r, char *s)
 		case 'i':
 			if (n == 6 && !strncmp(t, "ignore", n))
 				flag = RULE_ignore;
-			else if (n == 8 && !strncmp(t, "implicit", n))
-				flag = RULE_implicit;
+			else if (state.strict < 4 && n == 8 && !strncmp(t, "implicit", n))
+				flag = RULE_dontcare;
 			break;
 		case 'v':
 			if (n == 7 && !strncmp(t, "virtual", n))
@@ -1623,15 +1803,26 @@ static void attributes(Rule_t *r, char *s)
 		else if (flag == 0 || state.strict >= 2)
 		{
 			t[n] = '\0';
-			report(3, "unknown attribute", t, 0);
+			error_out("unknown attribute", t);
 		}
 		else if (state.strict)
-			report(1, "deprecated", t, 0);
+			report(1, "deprecated", t, NULL);
 	}
 }
 
 /*
- * define ${mam_libX} for library reference lib
+ * append libNAME.a to the given buffer
+ */
+
+void append_ar_name(Buf_t *buf, char *name)
+{
+	append(buf, "lib");
+	append(buf, name);
+	append(buf, ".a");
+}
+
+/*
+ * define %{mam_libX} for library reference lib
  *
  * lib is expected to be in the format "-lX"
  */
@@ -1640,14 +1831,10 @@ static void attributes(Rule_t *r, char *s)
 
 static char *require(char *lib, int dontcare)
 {
-	static int	dynamic = -1;
 	char		*s, *r, varname[64];
 
-	if (dynamic < 0)
-		dynamic = (s = getval(state.vars, "mam_cc_L")) ? atoi(s) : 0;
-
 	if (strlen(lib + 2) > sizeof(varname) - sizeof(LIB_VARPREFIX))
-		report(3, "-lname too long", lib, 0);
+		error_out("-lname too long", lib);
 	sprintf(varname, LIB_VARPREFIX "%s", lib + 2);
 
 	if (!(r = getval(state.vars, varname)))
@@ -1657,40 +1844,19 @@ static char *require(char *lib, int dontcare)
 		FILE		*f;
 		struct stat	st;
 
-		s = 0;
-		for (;;)
+		for (c = 0; ; c++)
 		{
-			if (s)
-				append(buf, s);
-			if (r = getval(state.vars, "mam_cc_PREFIX_ARCHIVE"))
-				append(buf, r);
-			append(buf, lib + 2);
-			if (r = getval(state.vars, "mam_cc_SUFFIX_ARCHIVE"))
-				append(buf, r);
-			r = expand(tmp, use(buf));
+			append_ar_name(buf, lib + 2);
+			r = use(buf);
 			if (!stat(r, &st))
 				break;
-			if (s)
+			if (c)
 			{
 				r = lib;
 				break;
 			}
-			s = "${INSTALLROOT}/lib/";
-			if (dynamic)
-			{
-				append(buf, s);
-				if (r = getval(state.vars, "mam_cc_PREFIX_SHARED"))
-					append(buf, r);
-				append(buf, lib + 2);
-				if (r = getval(state.vars, "mam_cc_SUFFIX_SHARED"))
-					append(buf, r);
-				r = expand(tmp, use(buf));
-				if (!stat(r, &st))
-				{
-					r = lib;
-					break;
-				}
-			}
+			append(buf, state.installroot);
+			append(buf, "/lib/");
 		}
 		if (r != lib)
 		{
@@ -1702,9 +1868,10 @@ static char *require(char *lib, int dontcare)
 		append(tmp, ".req");
 		if (!(f = fopen(use(tmp), "r")))
 		{
-			append(tmp, "${INSTALLROOT}/lib/lib/");
+			append(tmp, state.installroot);
+			append(tmp, "/lib/lib/");
 			append(tmp, lib + 2);
-			f = fopen(expand(buf, use(tmp)), "r");
+			f = fopen(use(tmp), "r");
 		}
 		if (f)
 		{
@@ -1731,14 +1898,19 @@ static char *require(char *lib, int dontcare)
 		}
 		else if (dontcare)
 		{
-			append(tmp, "echo 'int main(void){return 0;}' > libtest.$$.c\n"
-				"${CC} ${CCFLAGS} -o libtest.$$.x libtest.$$.c ");
+			append(tmp, "echo 'int main(void){return 0;}' > libtest.$$.c\n");
+			if (!(s = getval(state.vars, "CC")))
+				error_out("variable not defined", "CC");
+			append(tmp, s), add(tmp, ' ');
+			if (s = getval(state.vars, "CCFLAGS"))
+				append(tmp, s), add(tmp, ' ');
+			append(tmp, "-o libtest.$$.x libtest.$$.c ");
 			append(tmp, r);
 			append(tmp, " >/dev/null 2>&1\n"
 				"c=$?\n"
 				"exec rm -rf libtest.$$.* &\n"  /* also remove artefacts like *.dSYM dir (macOS) */
 				"exit $c\n");
-			if (execute(expand(buf, use(tmp))))
+			if (execute(NULL, use(tmp)))
 			{
 				if (tofree)
 					free(r);
@@ -1747,6 +1919,7 @@ static char *require(char *lib, int dontcare)
 		}
 		r = duplicate(r);
 		setval(state.vars, varname, r);
+		report(-4, r, varname, NULL);
 		drop(tmp);
 		drop(buf);
 	}
@@ -1754,25 +1927,25 @@ static char *require(char *lib, int dontcare)
 }
 
 /*
- * update ${<}, ${^} and ${?}
+ * update %{<}, %{^} and %{?}
  */
 
 static void update_allprev(Rule_t *r, char *all, char *upd)
 {
 	char		*name = r->name;
-	unsigned long	n = strlen(name), nn;
-	/* set ${<} */
+	size_t		n = strlen(name), nn;
+	/* set %{<} */
 	auto_prev->value = reduplicate(auto_prev->value, name);
-	/* restore ${^}, append to it */
+	/* restore %{^}, append to it */
 	if (nn = strlen(all))
 		(all = realloc(all, nn + n + 2)) && (all[nn++] = ' ');
 	else
 		all = malloc(n + 1);
 	if (!all)
-		report(3, "out of memory [upd_allprev]", NULL, 0);
+		out_of_memory();
 	strcpy(all + nn, name);
 	auto_allprev->value = all;
-	/* restore ${?}, append to it if rule was updated */
+	/* restore %{?}, append to it if rule was updated */
 	if (r->flags & RULE_updated)
 	{
 		if (nn = strlen(upd))
@@ -1780,46 +1953,90 @@ static void update_allprev(Rule_t *r, char *all, char *upd)
 		else
 			upd = malloc(n + 1);
 		if (!upd)
-			report(3, "out of memory [upd_allprev]", NULL, 0);
+			out_of_memory();
 		strcpy(upd + nn, name);
 	}
 	auto_updprev->value = upd;
 }
 
 /*
- * input() until `done r'
- *
- * This function is called recursively for both 'make' and 'loop'. The inloop
- * parameter is nonzero while processing a loop, in which case modtime and
- * cmd are passed on from the caller and updated in the caller upon return.
- * If inloop==0, modtime must be initialised to zero and parentcmd is ignored.
+ * propagate last-modified timestamp and error flag from child rule to current rule
  */
 
-static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **parentcmd)
+static void propagate(Rule_t *q, Rule_t *r, time_t *modtime)
 {
+	report(-5, q->name, "propagate", q);
+	if (!(q->flags & RULE_ignore) && *modtime < q->time)
+		*modtime = q->time;
+	if (r && (q->flags & RULE_error))
+		r->flags |= RULE_error;
+}
+
+/*
+ * wait for all background jobs, then exit with their highest status or e
+ */
+
+static void exit_wait(int e)
+{
+	state.keepgoing = 1;
+	walk(state.rules, wreap);
+	if (state.exitstatus > e)
+		e = state.exitstatus;
+	exit(e);
+}
+
+/*
+ * wait for all the child rules' background jobs to finish,
+ * then propagate their timestamps and error flags
+ */
+
+void clearout_bg(Rule_t *r, Makestate_t *stp)
+{
+	while (stp->bg)
+	{
+		List_t	*prev = stp->bg;
+		reap(stp->bg->rule, 0);
+		propagate(stp->bg->rule, r, &stp->modtime);
+		stp->bg = stp->bg->next;
+		free(prev);
+	}
+}
+
+/*
+ * input() until `done r'
+ *
+ * This function is called recursively for both 'make' and 'loop'. The parentstate
+ * parameter is nonzero while processing a loop, in which case parentstate
+ * variables are passed on from the caller and updated in the caller on return.
+ */
+
+static void make(Rule_t *r, Makestate_t *parentstate)
+{
+	Makestate_t	st;	/* shareable state */
 	char		*s;
 	char		*u;	/* command name */
 	char		*t;	/* argument word */
 	char		*v;	/* operand string */
 	Rule_t		*q;	/* new rule */
-	unsigned long	x;	/* new modtime */
 	Buf_t		*buf;	/* scratch buffer */
-	Buf_t		*cmd;	/* shell action */
 
-	if (inloop)
-		cmd = *parentcmd;
+	if (parentstate)
+		st = *parentstate;
 	else
 	{
-		cmd = NULL;
+		memset(&st, 0, sizeof st);
 		r->making++;
 		if (r->flags & RULE_active)
 			state.active++;
 		if (*r->name)
 		{
 			if (!(r->flags & RULE_virtual))
-				modtime = bindfile(r);
+			{
+				bindfile(r);
+				st.modtime = r->time;
+			}
+			report(-1, r->name, "make", r);
 			state.indent++;
-			report(-1, r->name, "make", r->time);
 		}
 	}
 	buf = buffer();
@@ -1846,45 +2063,93 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 			t = v = s;
 		/* enforce 4-letter lowercase command name */
 		if (u[0]<'a' || u[0]>'z' || u[1]<'a' || u[1]>'z' || u[2]<'a' || u[2]>'z' || u[3]<'a' || u[3]>'z' || u[4] && !isspace(u[4]))
-			report(3, "not a command name", u, 0);
+			error_out("not a command name", u);
 		switch (KEY(u[0], u[1], u[2], u[3]))
 		{
 		case KEY('b','i','n','d'):
-			if (t[0] == '-' && t[1] == 'l' && (s = require(t, !strcmp(v, "dontcare"))) && strncmp(r->name, "FEATURE/", 8) && strcmp(r->name, "configure.h"))
+			if (!(t[0] == '-' && t[1] == 'l'))
+				error_out("bad -lname", t);
+			/* make sure it's finished linking before calling require() */
+			append_ar_name(buf, t + 2);
+			if (q = getval(state.rules, use(buf)))
 			{
-				/* bind to library file */
+				reap(q, 0);
+				propagate(q, r, &st.modtime);
+			}
+			if (s = require(t, !strcmp(v, "dontcare")))
+			{
+				char *libname = t + 2;
+				/*
+				 * bind to the *.a files that require() just derived from $INSTALLROOT/lib/lib/NAME
+				 */
 				for (;;)
 				{
+					Rule_t	*rp;
 					for (t = s; *s && !isspace(*s); s++);
 					if (*s)
 						*s = 0;
 					else
 						s = 0;
 					/* only bother if t is a path to a *.a we built (i.e. not -l...) */
-					if (t[0] != '-' || t[1] != 'l')
+					if (t[0] && (t[0] != '-' || t[1] != 'l'))
 					{
-						q = rule(expand(buf, t));
-						attributes(q, v);
-						x = bindfile(q);
-						if (modtime < x)
-							modtime = x;
-						if (q->flags & RULE_error)
-							r->flags |= RULE_error;
+						rp = rule(t);
+						attributes(rp, v);
+						bindfile(rp);
+						propagate(rp, r, &st.modtime);
+						report(-1, rp->name, "bind: file", rp);
 					}
 					if (!s)
 						break;
 					for (*s++ = ' '; isspace(*s); s++);
 				}
+				/*
+				 * read library header dependency rules from $INSTALLROOT/lib/mam/NAME
+				 *
+				 * ...but not for a library that was just made in the same Mamfile; its header
+				 * dependencies will already have been made as part of building that library
+				 */
+				if (q && (q->flags & RULE_made))
+					continue;
+				/*
+				 * The _hdrdeps_libNAME_ rule is generated by mkdeps; if its
+				 * name is changed below, mkdeps.sh must be changed to match!
+				 * If it has already been made...
+				 */
+				append(buf, "_hdrdeps_lib");
+				append(buf, libname);
+				add(buf, '_');
+				if ((q = getval(state.rules, use(buf))) && (q->flags & RULE_made))
+				{
+					/* ...then do a 'prev _hdrdeps_libNAME_' */
+					report(-2, q->name, "bind: prev", q);
+					propagate(q, r, &st.modtime);
+					continue;
+				}
+				/* otherwise, include the rules file if it exists */
+				append(buf, state.installroot);
+				append(buf, "/lib/mam/");
+				append(buf, libname);
+				s = use(buf);
+				if (push(s, NULL, 0))
+				{
+					report(-1, s, "bind: include", NULL);
+					make(r, &st);
+					pop();
+				}
 			}
 			continue;
 
 		case KEY('d','o','n','e'):
-			if (inloop)
+			r->endline = state.sp->line;
+			if (parentstate)
 			{
+				/* loop block done */
 				if (*t)
-					report(3, "superflous arguments", u, 0);
+					error_out("superflous arguments", u);
 				break;
 			}
+			/* make block done */
 			if (*t)
 			{	/* target is optional; use it for sanity check if present */
 				q = rule(expand(buf, t));
@@ -1893,56 +2158,35 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 					append(buf,q->name);
 					append(buf," != ");
 					append(buf,r->name);
-					report(3, "mismatched done statement", use(buf), 0);
+					error_out("mismatched done statement", use(buf));
 				}
 				if (*v)
 				{
 					if (state.strict >= 2)
-						report(3, "superfluous arguments", u, 0);
+						error_out("superfluous arguments", u);
 					else if (state.strict)
-						report(1, "attributes deprecated, move to 'make'", u, 0);
+						report(1, "attributes deprecated, move to 'make'", u, NULL);
 					attributes(r, v);
 				}
 			}
-			if (cmd && state.active && (state.force || r->time < modtime || !r->time && !modtime))
+			clearout_bg(r, &st);
+			if (st.cmd && state.active && (state.force || r->time < st.modtime || !r->time && !st.modtime))
 			{
-				char	*fname = state.sp->file, *rname = r->name, *rnamepre = "", *val;
-				int	len;
-
+				/* flag for -e */
+				if (r->time)
+					r->flags |= RULE_preexisted;
 				/* show a nice trace header */
-				/* ...mamfile path: make relative to ${PACKAGEROOT} */
-				if (*fname == '/'
-				&& (val = getval(state.vars, "PACKAGEROOT")) && (len = strlen(val))
-				&& strncmp(fname, val, len) == 0 && fname[len] == '/' && fname[++len])
-					fname += len;
-				/* ...rule name: change install root path prefix back to '${INSTALLROOT}' for brevity */
-				if (*rname == '/'
-				&& (val = getval(state.vars, "INSTALLROOT")) && (len = strlen(val))
-				&& strncmp(rname, val, len) == 0 && rname[len] == '/' && rname[len + 1])
-					rname += len, rnamepre = "${INSTALLROOT}";
-				fprintf(stderr, "\n# %s: %lu-%lu: make %s%s\n",
-					fname, r->line, state.sp->line, rnamepre, rname);
-
-				/* -e option */
-				if (state.explain)
-				{
-					fprintf(stderr, "# reason: ");
-					if (!r->time)
-						fprintf(stderr, "target %s\n",
-							(r->flags & RULE_virtual) ? "is virtual" : "not found");
-					else
-						fprintf(stderr, "target [%lu] older than prerequisites [%lu]\n", r->time, modtime);
-				}
-
+				if ((!PARALLEL(r) || state.chaos) && !(r->flags & RULE_error))
+					print_nice_hdr(r);
 				/* run the shell action */
-				x = run(r, use(cmd));
-				if (modtime < x)
-					modtime = x;
+				run(r, use(st.cmd));
+				if (!r->pid)
+					propagate(r, NULL, &st.modtime);
 				r->flags |= RULE_updated;
 			}
 			r->flags |= RULE_made;
-			if (!(r->flags & (RULE_dontcare|RULE_error|RULE_exists|RULE_generated|RULE_implicit|RULE_virtual)))
-				dont(r, 0, state.keepgoing);
+			if (!(r->flags & (RULE_dontcare|RULE_error|RULE_exists|RULE_generated|RULE_virtual)))
+				error_making(r, 0);
 			break;
 
 		case KEY('e','x','e','c'):
@@ -1955,16 +2199,16 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 			}
 			if (state.active)
 			{
-				if (cmd)
-					add(cmd, '\n');
+				if (st.cmd)
+					add(st.cmd, '\n');
 				else
-					cmd = buffer();
+					st.cmd = buffer();
 				/* expand MAM vars now for each line, and not for the entire script at 'done',
-				 * to avoid confusing behaviour of automatic variables such as ${<} */
-				append(cmd, expand(buf, v));
+				 * to avoid confusing behaviour of automatic variables such as %{<} */
+				append(st.cmd, expand(buf, v));
 			}
 			/* if a shim is buffered, get it ready and reset the buffer */
-			if (get(state.shim_buf))
+			if (getsize(state.shim_buf))
 			{
 				state.shim = use(state.shim_buf);
 				/* a single 'shim -' deactivates the shim */
@@ -1975,16 +2219,16 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 
 		case KEY('l','o','o','p'):
 		{
-			long		saveoff;
+			off_t		saveoff;
 			char		*vname, *words, *w, *nextw, *cp, *save_value;
 			Dict_item_t	*vnode;
-			unsigned long	saveline = state.sp->line;
+			unsigned int	saveline = state.sp->line;
 
 			if (!*v)
-				report(3, "syntax error", u, 0);
+				error_out("syntax error", u);
 			/* remember current offset for repeated reading */
-			if ((saveoff = ftell(state.sp->fp)) < 0)
-				report(3, "unseekable input", u, 0);
+			if ((saveoff = ftello(state.sp->fp)) < 0)
+				error_out("unseekable input", u);
 			/* iterate through one or more whitespace-separated words */
 			vname = duplicate(expand(buf, t));
 			w = words = duplicate(expand(buf, v));
@@ -2008,12 +2252,12 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 				/* reposition input to the start of this loop block */
 				if (w != words)
 				{
-					if (fseek(state.sp->fp, saveoff, SEEK_SET) < 0)
-						report(3, "fseek failed", u, 0);
+					if (fseeko(state.sp->fp, saveoff, SEEK_SET) < 0)
+						error_out("fseek failed", u);
 					state.sp->line = saveline;
 				}
 				/* (re)read the loop block until 'done', in the context of the current rule */
-				modtime = make(r, 1, modtime, &cmd);
+				make(r, &st);
 			}
 			vnode->value = save_value;
 			free(words);
@@ -2028,71 +2272,87 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 			char *save_updprev = auto_updprev->value;
 			char *name = expand(buf, t);
 			if ((q = getval(state.rules, name)) && (q->flags & RULE_made))
-				report(state.strict < 3 ? 1 : 3, "rule already made", name, 0);
+				report(state.strict < 3 ? 1 : 3, "rule already made", name, NULL);
 			if (!q)
 				q = rule(name);
-			/* set ${@}; empty ${?}, ${^} and ${<} */
+			/* set %{@}; empty %{?}, %{^} and %{<} */
 			auto_making->value = q->name;
 			auto_updprev->value = empty;
 			auto_allprev->value = empty;
 			auto_prev->value = reduplicate(auto_prev->value, empty);
 			if (q->making)
-				report(state.strict < 3 ? 1 : 3, "rule already being made", name, 0);
+				report(state.strict < 3 ? 1 : 3, "rule already being made", name, NULL);
 			else
 			{
 				/* make the target */
 				attributes(q, v);
-				x = make(q, 0, 0, NULL);
-				if (!(q->flags & RULE_ignore) && modtime < x)
-					modtime = x;
-				if (q->flags & RULE_error)
-					r->flags |= RULE_error;
+				if (q->flags & RULE_virtual)
+					clearout_bg(r, &st);
+				make(q, NULL);
+				if (q->pid)
+				{
+					/* add the rule to the bg list */
+					List_t	*j = malloc(sizeof(List_t));
+					if (!j)
+						out_of_memory();
+					j->rule = q;
+					j->next = st.bg;
+					st.bg = j;
+				}
+				else
+					propagate(q, r, &st.modtime);
 			}
-			/* update ${<}, restore/update ${^} and ${?} */
+			/* update %{<}, restore/update %{^} and %{?} */
 			if (auto_allprev->value != empty)
 				free(auto_allprev->value);
 			if (auto_updprev->value != empty)
 				free(auto_updprev->value);
 			update_allprev(q, save_allprev, save_updprev);
-			/* restore ${@} */
+			/* restore %{@} */
 			auto_making->value = save_making;
 			continue;
 		}
 
+		case KEY('m','a','k','p'):
 		case KEY('p','r','e','v'):
 		{
+			const int makp = (u[0] == 'm');
 			char *name = expand(buf, t);
-			if (!state.strict)
-				q = rule(name); /* for backward compat */
-			else if (!(q = getval(state.rules, name)))
-			{	/*
-				 * 'prev' on a nonexistent rule, i.e., without a preceding 'make'...'done':
-				 * special-case this as a way to declare a simple source file prerequisite
-				 */
+			q = getval(state.rules, name);
+			if (!q && !makp && !state.strict)
+				rule(name); /* for backward compat */
+			else if (!q && (makp || state.strict < 4))
+			{
+				/* declare a simple source file prerequisite */
 				attributes(q = rule(name), v);
 				if (!(q->flags & RULE_virtual))
 				{
 					bindfile(q);
 					if (!(q->flags & (RULE_dontcare | RULE_exists)))
-						dont(q, 0, state.keepgoing);
+						error_making(q, 0);
+					propagate(q, r, &st.modtime);
 				}
 				q->flags |= RULE_made;
+				report(-2, q->name, "makp", q);
 			}
-			else if (*v)
-				report(3, v, "prev: superfluous attributes", 0);
-			if (q->making)
-				report(state.strict < 3 ? 1 : 3, "rule already being made", name, 0);
-			else
+			else if (makp)
 			{
-				if (!(q->flags & RULE_ignore) && modtime < q->time)
-					modtime = q->time;
-				if (q->flags & RULE_error)
-					r->flags |= RULE_error;
-				state.indent++;
-				report(-2, q->name, "prev", q->time);
-				state.indent--;
+				if (q->flags & RULE_made)
+					error_out(name, "rule already made");
 			}
-			/* update ${<}, ${^} and ${?} */
+			else if (!q)
+				error_out(name, "prev: rule not made");
+			else if (*v && state.strict)
+				error_out(v, "prev: attributes not allowed");
+			else if (q->making)
+				report(state.strict < 3 && !makp ? 1 : 3, "rule already being made", name, NULL);
+			else
+			{	/* we may need to wait for it to finish processing */
+				reap(q, 0);
+				report(-2, q->name, "prev", q);
+				propagate(q, r, &st.modtime);
+			}
+			/* update %{<}, %{^} and %{?} */
 			update_allprev(q, auto_allprev->value, auto_updprev->value);
 			continue;
 		}
@@ -2117,7 +2377,7 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 			if (!state.probed && strcmp(t, "CC") == 0)
 			{
 				state.probed = 1;
-				probe();
+				probe(r, &st);
 			}
 			continue;
 
@@ -2140,39 +2400,39 @@ static unsigned long make(Rule_t *r, int inloop, unsigned long modtime, Buf_t **
 			/* FALLTHROUGH */
 
 		default:
-			report(3, "unknown command", u, 0);
+			error_out("unknown command", u);
 		}
 		break;
 	}
 	drop(buf);
-	if (inloop)
+	if (parentstate)
 	{
-		*parentcmd = cmd;
-		return modtime;
+		*parentstate = st;
+		return;
 	}
-	if (cmd)
-		drop(cmd);
+	if (st.cmd)
+		drop(st.cmd);
+	r->time = st.modtime;
 	if (*r->name)
 	{
-		report(-1, r->name, "done", modtime);
 		state.indent--;
+		report(-1, r->name, "done", r);
 	}
 	if (r->flags & RULE_active)
 		state.active--;
 	r->making--;
-	return r->time = modtime;
 }
 
 /*
  * verify that active targets were made
  */
 
-static int verify(Dict_item_t *item, void *handle)
+static int verify(Dict_item_t *item)
 {
 	Rule_t	*r = item->value;
 
 	if ((r->flags & (RULE_active|RULE_error|RULE_made)) == RULE_active)
-		dont(r, 0, 1);
+		error_making(r, 0);
 	return 0;
 }
 
@@ -2199,6 +2459,8 @@ static int update(Rule_t *r)
 {
 	List_t	*x;
 	Buf_t	*buf;
+	char	*args = getval(state.vars, "MAMAKEARGS");
+	int	testing = !strcmp(args, "test");
 
 	/* topological sort */
 	r->flags |= RULE_made;
@@ -2212,8 +2474,8 @@ static int update(Rule_t *r)
 
 	/* announce */
 	{
-		char	*p, *q;
-		int	n;
+		char    *p, *q;
+		size_t  n;
 		append(buf, state.pwd);
 		add(buf, '/');
 		append(buf, r->name);
@@ -2222,17 +2484,18 @@ static int update(Rule_t *r)
 		q = getval(state.vars, "INSTALLROOT");
 		if (q && strncmp(p, q, n = strlen(q)) == 0)
 			p += n + 1;
-		fprintf(stderr, "\n# ... making %s ...\n", p);
+		fprintf(stderr, "\n# ... %sing %s ...\n", testing ? "test" : "mak", p);
 		if (state.explain)
 			fprintf(stderr, "# reason: recursion\n");
 	}
 
 	/* do */
+	append(buf, "$MAMAKE_DEBUG_PREFIX ");
 	append(buf, getval(state.vars, "MAMAKE"));
 	append(buf, " -C ");
 	append(buf, r->name);
 	add(buf, ' ');
-	append(buf, getval(state.vars, "MAMAKEARGS"));
+	append(buf, args);
 	run(r, use(buf));
 	drop(buf);
 	return 0;
@@ -2242,7 +2505,7 @@ static int update(Rule_t *r)
  * scan Mamfile prereqs
  */
 
-static int scan(Dict_item_t *item, void *handle)
+static int scan(Dict_item_t *item)
 {
 	Rule_t	*r = item->value;
 	char	*s, *t;
@@ -2301,7 +2564,7 @@ static int scan(Dict_item_t *item, void *handle)
  * descend into op and its prereqs
  */
 
-static int descend(Dict_item_t *item, void *handle)
+static int descend(Dict_item_t *item)
 {
 	Rule_t	*r = item->value;
 
@@ -2314,7 +2577,7 @@ static int descend(Dict_item_t *item, void *handle)
  * append the non-leaf active targets to state.opt
  */
 
-static int active(Dict_item_t *item, void *handle)
+static int active(Dict_item_t *item)
 {
 	Rule_t *r = item->value;
 
@@ -2335,7 +2598,7 @@ static int active(Dict_item_t *item, void *handle)
  * recurse on mamfiles in subdirs matching pattern
  */
 
-static int recurse(char *pattern)
+static void recurse(void)
 {
 	char		*s, *t;
 	Rule_t		*r;
@@ -2351,7 +2614,7 @@ static int recurse(char *pattern)
 	state.exec = !state.never;
 	state.leaf = dictionary();
 	append(buf, "ls -d ");
-	append(buf, pattern);
+	append(buf, state.recurse);
 	s = use(buf);
 	push("recurse", popen(s, "r"), STREAM_PIPE);
 	while (s = input())
@@ -2381,7 +2644,7 @@ static int recurse(char *pattern)
 	if (!state.active)
 	{
 		state.active = 1;
-		walk(state.rules, active, NULL);
+		walk(state.rules, active);
 	}
 	setval(state.vars, "MAMAKEARGS", duplicate(use(state.opt) + 1));
 
@@ -2389,22 +2652,25 @@ static int recurse(char *pattern)
 	 * scan the Mamfile and descend
 	 */
 
-	walk(state.rules, scan, NULL);
+	walk(state.rules, scan);
 	while (state.view)
 	{
 		View_t *prev = state.view;
 		state.view = state.view->next;
 		free(prev);
 	}
-	walk(state.rules, descend, NULL);
-	return 0;
+	walk(state.rules, descend);
 }
+
+/*
+ * -------- MAIN --------
+ */
 
 int main(int argc, char **argv)
 {
-	char	**e, *s, *t, *v;
-	Buf_t	*tmp;
-	int	c;
+	char		**e, *s, *t, *v;
+	Buf_t		*tmp;
+	int		c;
 
 	/*
 	 * initialize the state
@@ -2430,6 +2696,10 @@ int main(int argc, char **argv)
 	{
 		switch (optget(argv, usage))
 		{
+		case 'c':
+			append(state.opt, " -c");
+			state.chaos = 1;
+			continue;
 		case 'e':
 			append(state.opt, " -e");
 			state.explain = 1;
@@ -2437,6 +2707,11 @@ int main(int argc, char **argv)
 		case 'i':
 			append(state.opt, " -i");
 			state.ignore = 1;
+			continue;
+		case 'j':
+			append(state.opt, " -j");
+			append(state.opt, opt_info.arg);
+			state.maxjobs = opt_info.num;
 			continue;
 		case 'k':
 			append(state.opt, " -k");
@@ -2453,12 +2728,8 @@ int main(int argc, char **argv)
 			append(state.opt, " -F");
 			state.force = 1;
 			continue;
-		case 'K':
-			continue;
 		case 'V':
-			write(1, id + 10, strlen(id) - 12);
-			putchar('\n');
-			exit(0);
+			return !(write(1, id + 10, strlen(id) - 12) > 0 && putchar('\n') == '\n');
 		case 'f':
 			append(state.opt, " -f ");
 			append(state.opt, opt_info.arg);
@@ -2474,6 +2745,8 @@ int main(int argc, char **argv)
 			append(state.opt, " -D");
 			append(state.opt, opt_info.arg);
 			state.debug = -opt_info.num;
+			if (state.debug > 0)
+				state.debug = 0;
 			continue;
 		case 'G':
 			append(state.opt, " -G");
@@ -2539,6 +2812,10 @@ int main(int argc, char **argv)
 			{
 			case 0:
 				break;
+			case 'c':
+				append(state.opt, " -c");
+				state.chaos = 1;
+				continue;
 			case 'e':
 				append(state.opt, " -e");
 				state.explain = 1;
@@ -2566,24 +2843,21 @@ int main(int argc, char **argv)
 				append(state.opt, " -G");
 				setval(state.vars, "-debug-symbols", "1");
 				continue;
-			case 'K':
-				continue;
 			case 'S':
 				append(state.opt, " -S");
 				setval(state.vars, "-strip-symbols", "1");
 				continue;
 			case 'V':
-				write(1, id + 10, strlen(id) - 12);
-				putchar('\n');
-				exit(0);
+				return !(write(1, id + 10, strlen(id) - 12) > 0 && putchar('\n') == '\n');
 			case 'f':
+			case 'j':
 			case 'r':
 			case 'C':
 			case 'D':
 				t = s;
 				if (!*++s && !(s = *++argv))
 				{
-					report(2, "option value expected", t, 0);
+					report(2, "option value expected", t, NULL);
 					usage();
 				}
 				else
@@ -2593,6 +2867,11 @@ int main(int argc, char **argv)
 						append(state.opt, " -f ");
 						append(state.opt, s);
 						state.file = s;
+						break;
+					case 'j':
+						append(state.opt, " -j");
+						append(state.opt, s);
+						state.maxjobs = atoi(s);
 						break;
 					case 'r':
 						state.recurse = s;
@@ -2604,11 +2883,13 @@ int main(int argc, char **argv)
 						append(state.opt, " -D");
 						append(state.opt, s);
 						state.debug = -atoi(s);
+						if (state.debug > 0)
+							state.debug = 0;
 						break;
 					}
 				break;
 			default:
-				report(2, "unknown option", s, 0);
+				report(2, "unknown option", s, NULL);
 				/* FALLTHROUGH */
 			case '?':
 				usage();
@@ -2625,6 +2906,8 @@ int main(int argc, char **argv)
 
 	if (state.force)
 		state.explain = 0;
+	if (state.recurse)
+		state.maxjobs = 0;
 
 	/*
 	 * load the environment
@@ -2643,6 +2926,8 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+	if (!(state.installroot = getval(state.vars, "INSTALLROOT")) || *state.installroot != '/')
+		error_out("variable not defined", "INSTALLROOT");
 
 	/*
 	 * initialize the automatic variables
@@ -2681,14 +2966,6 @@ int main(int argc, char **argv)
 		}
 		if (!*t)
 		{
-			/*
-			 * handle a few targets for nmake compatibility
-			 */
-
-			if (*s == 'e' && !strncmp(s, "error 0 $(MAKEVERSION:", 22))
-				exit(1);
-			if (*s == 'r' && !strcmp(s, "recurse") || *s == 'c' && !strncmp(s, "cc-", 3))
-				continue;
 			rule(s)->flags |= RULE_active;
 			state.active = 0;
 			if (state.recurse)
@@ -2705,7 +2982,7 @@ int main(int argc, char **argv)
 	 */
 
 	if (state.directory && chdir(state.directory))
-		report(3, "cannot change working directory", NULL, 0);
+		error_out("cannot change working directory", NULL);
 	view();
 
 	/*
@@ -2713,7 +2990,25 @@ int main(int argc, char **argv)
 	 */
 
 	if (state.recurse)
-		return recurse(state.recurse);
+	{
+		recurse();
+		return state.exitstatus;
+	}
+
+	/*
+	 * set up SIGCHLD handling for parallel processing
+	 */
+
+	if (state.maxjobs > 1)
+	{	
+		struct sigaction act;
+		sigemptyset(&empty_sigmask);
+		act.sa_handler = sigchld_dummy;
+		sigemptyset(&act.sa_mask);
+		sigaddset(&act.sa_mask, SIGCHLD);
+		act.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+		sigaction(SIGCHLD, &act, NULL);
+	}
 
 	/*
 	 * read the mamfile(s) and bring the targets up to date
@@ -2721,7 +3016,7 @@ int main(int argc, char **argv)
 
 	setval(state.vars, "MAMAKEARGS", duplicate(use(state.opt) + 1));
 	push(state.file, NULL, STREAM_MUST);
-	make(rule(""), 0, 0, NULL);
+	make(rule(""), NULL);
 	pop();
 
 	/*
@@ -2729,11 +3024,14 @@ int main(int argc, char **argv)
 	 */
 
 	if (!state.active && !state.verified)
-		walk(state.rules, verify, NULL);
+	{
+		state.keepgoing = 1;
+		walk(state.rules, verify);
+	}
 
 	/*
 	 * done
 	 */
 
-	return state.errors != 0;
+	return state.exitstatus;
 }

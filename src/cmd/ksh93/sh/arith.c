@@ -268,18 +268,20 @@ static Sfdouble_t arith(const char **ptr, struct lval *lvalue, int type, Sfdoubl
 			r = (float)n;
 		else if((attr & NV_DOUBLE)==NV_DOUBLE)		/* normal float */
 			r = (double)n;
+		/* Avoid typecasting a negative float (Sfdouble_t) to an
+		 * unsigned integer (uint*_t), which is undefined behaviour */
 		else if((attr & NV_UINT64)==NV_UINT64)		/* long unsigned integer */
-			r = (uintmax_t)n;
+			r = n < 0 ? -((uintmax_t)(-n)) : (uintmax_t)n;
 		else if((attr & NV_UINT16)==NV_UINT16)		/* short unsigned integer */
-			r = (uint16_t)n;
+			r = n < 0 ? -((uint16_t)(-n)) : (uint16_t)n;
 		else if((attr & NV_UINT32)==NV_UINT32)		/* normal unsigned integer */
-			r = (uint32_t)n;
+			r = n < 0 ? -((uint32_t)(-n)) : (uint32_t)n;
 		else if((attr & NV_INT64)==NV_INT64)		/* long signed integer */
 			r = (intmax_t)n;
 		else if((attr & NV_INT16)==NV_INT16)		/* short signed integer */
-			r = (int16_t)n;
+			r = (int16_t)((intmax_t)n);
 		else if((attr & NV_INT32)==NV_INT32)		/* normal signed integer */
-			r = (int32_t)n;
+			r = (int32_t)((intmax_t)n);
 #if _AST_release
 		else	r = n;					/* should never happen */
 #else
@@ -435,15 +437,10 @@ static Sfdouble_t arith(const char **ptr, struct lval *lvalue, int type, Sfdoubl
 			char	lastbase=0, *val = xp, oerrno = errno;
 			lvalue->eflag = 0;
 			errno = 0;
-			if(!sh_isoption(sh.bltinfun==b_let ? SH_LETOCTAL : SH_POSIX))
-			{
-				/* Skip leading zeros to avoid parsing as octal */
-				while(*val=='0' && isdigit(val[1]))
-					val++;
-			}
 			r = strtonll(val,&str, &lastbase,-1);
-			if(*str=='8' || *str=='9')
+			if(lastbase==8 && *val=='0' && !sh_isoption(sh.bltinfun==b_let ? SH_LETOCTAL : SH_POSIX))
 			{
+				/* disable leading-0 octal by reparsing as decimal */
 				lastbase=10;
 				errno = 0;
 				r = strtonll(val,&str, &lastbase,-1);

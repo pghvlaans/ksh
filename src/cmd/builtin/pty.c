@@ -18,7 +18,7 @@
 ***********************************************************************/
 
 static const char usage[] =
-"[-?\n@(#)pty (AT&T Research) 2013-05-22\n]"
+"[-?\n@(#)pty (ksh 93u+m) 2024-07-27\n]"
 "[-author?Glenn Fowler <gsf@research.att.com>]"
 "[-author?David Korn <dgk@research.att.com>]"
 "[-copyright?Copyright (c) 2001-2013 AT&T Intellectual Property]"
@@ -109,7 +109,6 @@ static const char usage[] =
 #include <proc.h>
 #include <ctype.h>
 #include <regex.h>
-#include <vmalloc.h>
 #include <ast_time.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -166,7 +165,7 @@ static noreturn void outofmemory(void)
 		if(_pty_first[n-2]=='p' && (name[n-2]=='z' || name[n-2]=='Z'))
 		{
 			if(name[n-2]=='z')
-				name[n-2]=='P';
+				name[n-2]='P';
 			else
 				return NULL;
 		}
@@ -497,19 +496,20 @@ match(char* pattern, char* text, int must)
 
 typedef struct Master_s
 {
-	Vmalloc_t*	vm;		/* allocation region			*/
 	char*		ignore;		/* ignore master lines matching this re	*/
 	char*		peek;		/* peek buffer pointer			*/
 	char*		cur;		/* current line				*/
 	char*		nxt;		/* next line				*/
 	char*		end;		/* end of lines				*/
 	char*		max;		/* end of buf				*/
+	char*		bufunderflow;	/* FIXME: kludge to cope with underflow	*/
 	char*		buf;		/* current buffer			*/
 	char*		prompt;		/* peek prompt				*/
 	int		cursor;		/* cursor in buf, 0 if fresh line	*/
 	int		line;		/* prompt line number			*/
 	int		restore;	/* previous line save char		*/
 } Master_t;
+#define BUFUNDERFLOW	128		/* bytes of buffer underflow to allow	*/
 
 /*
  * read one line from the master
@@ -525,7 +525,6 @@ masterline(Sfio_t* mp, Sfio_t* lp, char* prompt, int must, int timeout, Master_t
 	char*		s;
 	char*		t;
 	ssize_t		n;
-	ssize_t		a;
 	size_t		promptlen = 0;
 	ptrdiff_t	d;
 	char		promptbuf[64];
@@ -652,11 +651,16 @@ masterline(Sfio_t* mp, Sfio_t* lp, char* prompt, int must, int timeout, Master_t
 	error(-2, "b \"%s\"", fmtnesq(s, "\"", n));
 	if ((bp->max - bp->end) < n)
 	{
-		a = roundof(bp->max - bp->buf + n, SFIO_BUFSIZE);
+		size_t	old_buf_size, new_buf_size;
 		r = bp->buf;
-		if (!(bp->buf = vmnewof(bp->vm, bp->buf, char, a, 0)))
+		old_buf_size = bp->max - bp->buf + 1;
+		new_buf_size = roundof(old_buf_size + n, SFIO_BUFSIZE);
+		bp->bufunderflow = realloc(bp->bufunderflow, new_buf_size + BUFUNDERFLOW);
+		if (!bp->bufunderflow)
 			outofmemory();
-		bp->max = bp->buf + a;
+		bp->buf = bp->bufunderflow + BUFUNDERFLOW;
+		memset(bp->buf + old_buf_size, 0, new_buf_size - old_buf_size);
+		bp->max = bp->buf + new_buf_size - 1;
 		if (bp->buf != r)
 		{
 			d = bp->buf - r;
@@ -695,7 +699,9 @@ masterline(Sfio_t* mp, Sfio_t* lp, char* prompt, int must, int timeout, Master_t
 	s = r;
 	if (bp->cursor)
 	{
-		r -= bp->cursor;
+		r -= bp->cursor; /* FIXME: r may now be before bp->buf */
+		if (r < bp->bufunderflow)
+			error(ERROR_PANIC, "pty.c:%d: internal error: r is %d bytes before bp->bufunderflow", __LINE__, bp->bufunderflow - r);
 		bp->cursor = 0;
 	}
 	for (t = 0, n = 0; *s; s++)
@@ -781,18 +787,16 @@ dialogue(Sfio_t* mp, Sfio_t* lp, int delay, int timeout)
 	char*		m;
 	char*		e;
 	char*		id;
-	Vmalloc_t*	vm;
 	Cond_t*		cond;
 	Master_t*	master;
 
 	int		status = 0;
 
-	if (!(vm = vmopen(Vmdcheap, Vmbest, 0)) ||
-	    !(cond = vmnewof(vm, 0, Cond_t, 1, 0)) ||
-	    !(master = vmnewof(vm, 0, Master_t, 1, 0)) ||
-	    !(master->buf = vmnewof(vm, 0, char, 2 * SFIO_BUFSIZE, 0)))
+	if (!(cond = calloc(1, sizeof(*cond))) ||
+	    !(master = calloc(1, sizeof(*master))) ||
+	    !(master->bufunderflow = calloc(2 * SFIO_BUFSIZE + BUFUNDERFLOW, sizeof(char))))
 		outofmemory();
-	master->vm = vm;
+	master->buf = master->bufunderflow + BUFUNDERFLOW;
 	master->cur = master->end = master->buf;
 	master->max = master->buf + 2 * SFIO_BUFSIZE - 1;
 	master->restore = -1;
@@ -841,7 +845,7 @@ dialogue(Sfio_t* mp, Sfio_t* lp, int delay, int timeout)
 				error(2, "%s: invalid delay -- milliseconds expected", s);
 			break;
 		case 'i':
-			if (!cond->next && !(cond->next = vmnewof(vm, 0, Cond_t, 1, 0)))
+			if (!cond->next && !(cond->next = calloc(1, sizeof(Cond_t))))
 				outofmemory();
 			cond = cond->next;
 			cond->flags = IF;
@@ -946,38 +950,29 @@ dialogue(Sfio_t* mp, Sfio_t* lp, int delay, int timeout)
 		case 'I':
 			if (master->ignore)
 			{
-				vmfree(vm, master->ignore);
+				free(master->ignore);
 				master->ignore = 0;
 			}
-			if (*s && !(master->ignore = vmstrdup(vm, s)))
-			{
-				error(ERROR_SYSTEM|2, "out of memory");
-				goto done;
-			}
+			if (*s && !(master->ignore = strdup(s)))
+				outofmemory();
 			break;
 		case 'L':
 			if (error_info.id)
 			{
-				vmfree(vm, error_info.id);
+				free(error_info.id);
 				error_info.id = 0;
 			}
-			if (*s && !(error_info.id = vmstrdup(vm, s)))
-			{
-				error(ERROR_SYSTEM|2, "out of memory");
-				goto done;
-			}
+			if (*s && !(error_info.id = strdup(s)))
+				outofmemory();
 			break;
 		case 'P':
 			if (master->prompt)
 			{
-				vmfree(vm, master->prompt);
+				free(master->prompt);
 				master->prompt = 0;
 			}
-			if (*s && !(master->prompt = vmstrdup(vm, s)))
-			{
-				error(ERROR_SYSTEM|2, "out of memory");
-				goto done;
-			}
+			if (*s && !(master->prompt = strdup(s)))
+				outofmemory();
 			break;
 		default:
 			if (cond->flags & SKIP)
@@ -993,8 +988,6 @@ dialogue(Sfio_t* mp, Sfio_t* lp, int delay, int timeout)
 		sfclose(mp);
 	error_info.id = id;
 	error_info.line = line;
-	if (vm)
-		vmclose(vm);
 	return status ? status : error_info.errors != 0;
 }
 

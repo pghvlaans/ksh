@@ -40,10 +40,6 @@
 #include	"FEATURE/locale"
 #include	"streval.h"
 
-#if !_std_malloc
-#   include	<vmalloc.h>
-#endif
-
 #if _lib_getrusage && !defined(RUSAGE_SELF)
 #   include <sys/resource.h>
 #endif
@@ -1156,13 +1152,14 @@ int sh_exec(const Shnode_t *t, int flags)
 					sfsync(sh.outpool);
 				if(!np && !sh_isstate(SH_EXEC))
 				{
-					if(*com0 == '/' && !sh_isoption(SH_RESTRICTED))
+					if(!sh_isoption(SH_RESTRICTED) || !strchr(com0,'/'))
 					{
-						/* Check for path-bound builtin referenced by absolute canonical path, in
-						   case the parser didn't provide a pointer (e.g. '$(whence -p cat) foo') */
+						/* Search for a built-in again (including, unless restricted, a path-bound
+						 * builtin referenced by canonical path) in case no node pointer was found
+						 * above or at parse time */
 						np = nv_search(com0, sh.bltin_tree, 0);
 					}
-					else if(strchr(com0,'/'))
+					if(np || strchr(com0,'/'))
 					{
 						/* Do nothing */
 					}
@@ -1769,20 +1766,20 @@ int sh_exec(const Shnode_t *t, int flags)
 				free_list(buffp->olist);
 			if(type&FPIN)
 			{
+				int e = sh.exitval, c = sh.chldexitsig;
 				job.waitall = waitall;
-				type = sh.exitval;
-				if(!(type&SH_EXITSIG))
+				if(!(e & SH_EXITSIG))
 				{
 					/* wait for remainder of pipeline */
 					if(sh.pipepid>1)
 					{
 						job_wait(sh.pipepid);
-						type = sh.exitval;
+						e = sh.exitval, c = sh.chldexitsig;
 					}
 					else
 						job_wait(waitall?pid:0);
-					if(type || !sh_isoption(SH_PIPEFAIL))
-						sh.exitval = type;
+					if(e || !sh_isoption(SH_PIPEFAIL))
+						sh.exitval = e, sh.chldexitsig = c;
 				}
 				sh.pipepid = 0;
 				sh.st.ioset = 0;
@@ -1841,7 +1838,8 @@ int sh_exec(const Shnode_t *t, int flags)
 			int	savepipe = pipejob;
 			int	savelock = nlock;
 			int	showme = t->tre.tretyp&FSHOWME;
-			int	n,waitall,savewaitall=job.waitall;
+			int	e, c;
+			int	waitall, savewaitall = job.waitall;
 			int	savejobid = job.curjobid;
 			int	*exitval=0,*saveexitval = job.exitval;
 			pid_t	savepgid = job.curpgid;
@@ -1909,7 +1907,7 @@ int sh_exec(const Shnode_t *t, int flags)
 				job_unlock();
 			if((pipejob = savepipe) && nlock<savelock)
 				pipejob = 1;
-			n = sh.exitval;
+			e = sh.exitval, c = sh.chldexitsig;
 			if(job.waitall = waitall)
 			{
 				if(sh_isstate(SH_MONITOR))
@@ -1921,18 +1919,19 @@ int sh_exec(const Shnode_t *t, int flags)
 					sh.intrap--;
 				}
 			}
-			if(n==0 && exitval)
+			if(e==0 && exitval)
 			{
 				while(exitval <= --job.exitval)
 				{
 					if(*job.exitval)
 					{
-						n = *job.exitval;
+						e = *job.exitval;
+						c = 0;
 						break;
 					}
 				}
 			}
-			sh.exitval = n;
+			sh.exitval = e, sh.chldexitsig = c;
 			if(!pipejob && sh_isstate(SH_MONITOR) && job.jobcontrol)
 				tcsetpgrp(JOBTTY,sh.pid);
 			job.curpgid = savepgid;
@@ -2870,9 +2869,6 @@ pid_t _sh_fork(pid_t parent,int flags,int *jobid)
 			*jobid = myjob;
 		return parent;
 	}
-#if !_std_malloc
-	vmtrace(-1);
-#endif
 	/* This is the child process */
 	sh.current_ppid = sh.current_pid;
 	sh.current_pid = getpid();  /* ${.sh.pid} */
@@ -3055,9 +3051,9 @@ int sh_funscope(int argn, char *argv[],int(*fun)(void*),void *arg,int execflg)
 	sh.st.save_tree = sh.var_tree;
 	if(!fun)
 	{
-		if(sh_isoption(SH_FUNCTRACE) && is_option(&options,SH_XTRACE) || nv_isattr(fp->node,NV_TAGGED))
+		if(nv_isattr(fp->node,NV_TAGGED))
 			sh_onoption(SH_XTRACE);
-		else
+		else if(!sh_isoption(SH_FUNCTRACE))
 			sh_offoption(SH_XTRACE);
 	}
 	sh.st.cmdname = argv[0];

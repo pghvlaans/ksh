@@ -699,10 +699,11 @@ unset x
 let x=010
 [[ $x == 10 ]] || err_exit 'let treating 010 as octal'
 (set -o letoctal; let x=010; [[ $x == 8 ]]) || err_exit 'let not treating 010 as octal with letoctal on'
-if [[ -o ?posix ]]
+if	((HAVE_posix))
 then	(set -o posix; let x=010; [[ $x == 8 ]]) || err_exit 'let not treating 010 as octal with posix on'
 fi
 
+unset A
 float z=0
 integer aa=2 a=1
 typeset -A A
@@ -1007,6 +1008,10 @@ got=$(PATH=/dev/null; typeset -i z; set +x; redirect 2>&1; z='add(2 , 3)'; echo 
 # arithmetic assignments should not trigger getn disciplines, but the return
 # value should still be cast to the type of the variable that is assigned to
 
+(
+	ulimit -c 0  # fork
+	Errors=0
+	# <<< outdent
 float x
 x.getn() { .sh.value=987.65; }
 let "got = x = 1234.56"
@@ -1014,6 +1019,13 @@ let "got = x = 1234.56"
 [[ $x == 987.65* ]] || err_exit "arithmetic comparison fails to trigger getn discipline (got $x)"
 unset x
 whence -q x.getn && err_exit "unset x fails to unset -f x.getn"
+	# >>> indent
+	exit $Errors
+)
+if	let "(e = $?) > 128"
+then	err_exit "getn discipline crashed the shell (got status $e/SIG$(kill -l "$e"))"
+else	let "Errors += e"
+fi
 
 (
 	ulimit -c 0  # fork
@@ -1029,6 +1041,7 @@ whence -q x.getn && err_exit "unset x fails to unset -f x.getn"
 		then	err_exit "arithmetic assignment does not return properly typecast value (-${sz}F, got $got)"
 		fi
 	done
+	exit $Errors
 )
 if	let "(e = $?) > 128"
 then	err_exit "typeset crashed the shell (got status $e/SIG$(kill -l "$e"))"
@@ -1056,6 +1069,73 @@ exp=-20#j12
 integer 20 got=$exp
 [[ $got == "$exp" ]] || err_exit "negative base-20 number (expected '$exp', got '$got')"
 unset got
+
+# ======
+exp=': arithmetic syntax error'
+# when leading 0 is recognised as octal, invalid octal should be an error
+for v in 08 028 089 09 029 098 012345678
+do	got=$(set --letoctal; let "$v" 2>&1)
+	[[ e=$? -eq 1 && $got == *"$exp" ]] || err_exit "invalid leading-zero octal number $v not an error" \
+		"(expected status 1 and match of *'$exp', got status $e and '$got')"
+done
+# only a single 0 should precede x or X for it to be a hexadecimal number
+got=$(eval ': $((00xF))' 2>&1)
+[[ e=$? -eq 1 && $got == *"$exp" ]] || err_exit "extra zero before 0x not an error (expansion)" \
+	"(expected status 1 and match of *'$exp', got status $e and '$got')"
+got=$(let '00xF' 2>&1)
+[[ e=$? -eq 1 && $got == *"$exp" ]] || err_exit "extra zero before 0x not an error (let)" \
+	"(expected status 1 and match of *'$exp', got status $e and '$got')"
+# ksh base specifiers (like 16# for hexadecimal) may not have leading zeros
+got=$(eval ': $((016#F))' 2>&1)
+[[ e=$? -eq 1 && $got == *"$exp" ]] || err_exit "leading zero before 16# not an error (expansion)" \
+	"(expected status 1 and match of *'$exp', got status $e and '$got')"
+got=$(let '016#F' 2>&1)
+[[ e=$? -eq 1 && $got == *"$exp" ]] || err_exit "leading zero before 16# not an error (let)" \
+	"(expected status 1 and match of *'$exp', got status $e and '$got')"
+
+# ======
+# Lexer tests. Unmatched `((' crashed ksh or caused incorrect behaviour until 2024-07-20.
+# https://github.com/ksh93/ksh/issues/764
+exp=": \`(' unmatched"
+got=$( ( ulimit -c 0; set +x; eval '{ (( $(( 1 )); }' ) 2>&1 )
+[[ e=$? -eq 3 && $got == *"$exp" ]] || err_exit "unmatched '((', test 1" \
+	"(expected status 1 and match of *$(printf %q "$exp")," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+got=$( ( ulimit -c 0; set +x; eval 'x=$(( }; echo end' ) 2>&1 )
+[[ e=$? -eq 3 && $got == *"$exp" ]] || err_exit "unmatched '((', test 2" \
+	"(expected status 1 and match of *$(printf %q "$exp")," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+got=$( ( ulimit -c 0; set +x; eval '{ x=$(( }; echo end; }' ) 2>&1 )
+[[ e=$? -eq 3 && $got == *"$exp" ]] || err_exit "unmatched '((', test 3" \
+	"(expected status 1 and match of *$(printf %q "$exp")," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+got=$( ( ulimit -c 0; set +x; eval '(( }; echo end' ) 2>&1 )
+[[ e=$? -eq 3 && $got == *"$exp" ]] || err_exit "unmatched '((', test 4" \
+	"(expected status 1 and match of *$(printf %q "$exp")," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+got=$( ( ulimit -c 0; set +x; eval '{ (( }; echo end; }' ) 2>&1 )
+[[ e=$? -eq 3 && $got == *"$exp" ]] || err_exit "unmatched '((', test 5" \
+	"(expected status 1 and match of *$(printf %q "$exp")," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+
+got=$( ( ulimit -c 0; set +x; eval '{ (( $(( 1 )) )); }' ) 2>&1 )
+[[ e=$? -eq 0 && -z $got ]] || err_exit "matched '((' in compound command" \
+	"(expected status 0 and ''," \
+	"got status $e$( ((e>128)) && print -n /SIG && kill -l "$e") and $(printf %q "$got"))"
+
+# ======
+# On ARM systems, division by negative threw an incorrect "divide by zero" error!
+# https://github.com/ksh93/ksh/issues/770
+got=$(let "10 / -10 == -1 && 10 / -1 == -10 && 10 / -2 == -5" 2>&1) || err_exit "division by negative (got $(printf %q "$got"))"
+# Also, from 2024-01-21 to 2024-07-24, the return value of assigning negative to unsigned int was 0 on ARM
+if	! exp=$(PATH=/opt/ast/bin:$PATH; getconf UINT_MAX 2>/dev/null)
+then	warning "getconf UINT_MAX failed; skipping issue 770 test"
+else	typeset -ui i
+	got=$((i = -1))
+	[[ $i == "$exp" ]] || err_exit "unsigned int wrap-around of -1 (expected '$exp', got '$i')"
+	[[ $got == "$exp" ]] || err_exit "return value of assigning -1 to unsigned int (expected '$exp', got '$got')"
+	unset i
+fi
 
 # ======
 exit $((Errors<125?Errors:125))
