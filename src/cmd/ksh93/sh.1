@@ -6987,10 +6987,7 @@ is not set, then
 .BR /bin/ed\^ )
 is used as the editor.
 When editing is complete, the edited command(s)
-is executed. If the
-.B execonsave
-option is enabled, the edited command will be executed
-only if changes have been saved.
+is executed if changes have been made and saved.
 If
 .I last\^
 is not specified,
@@ -7877,10 +7874,6 @@ above.
 .B errexit
 Same as
 .BR \-e .
-.TP 8
-.B execonsave
-After using the full editor on a command line, execute only
-if changes have been saved.
 .TP 8
 .B functrace
 Causes the
