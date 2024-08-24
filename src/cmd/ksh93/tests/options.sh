@@ -208,6 +208,7 @@ set -- \
 	unset verbose
 ((SHOPT_ESH && !SHOPT_SCRIPTONLY)) && set -- "$@" emacs gmacs
 ((SHOPT_VSH && !SHOPT_SCRIPTONLY)) && set -- "$@" vi
+((SHOPT_ESH || SHOPT_VSH)) && ((!SHOPT_SCRIPTONLY)) && set -- "$@" execonsave
 for opt
 do	old=$opt
 	if [[ ! -o $opt ]]

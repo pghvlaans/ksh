@@ -150,6 +150,7 @@ typedef union Shnode_u Shnode_t;
 #if SHOPT_ESH || SHOPT_VSH
 #define SH_MULTILINE	47
 #define SH_NOBACKSLCTRL	48
+#define SH_EXECONSAVE   49
 #endif
 #define SH_LOGIN_SHELL	67
 #define SH_NOUSRPROFILE	79	/* internal use only */

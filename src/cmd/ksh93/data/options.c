@@ -44,6 +44,9 @@ const Shtable_t shtab_options[] =
 #endif
 	"errexit",			SH_ERREXIT,
 	"noexec",			SH_NOEXEC,
+#if SHOPT_ESH || SHOPT_VSH
+	"execonsave",			SH_EXECONSAVE,
+#endif
 	"functrace",			SH_FUNCTRACE,
 	"noglob",			SH_NOGLOB,
 #if SHOPT_GLOBCASEDET || !defined(SHOPT_GLOBCASEDET)

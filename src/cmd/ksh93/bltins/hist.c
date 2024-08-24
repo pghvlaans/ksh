@@ -311,8 +311,8 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			sh_eval(iop,1); /* this will close fdo */
 			hist_depth--;
 		}
-		/* run the command post-editor only if it has been changed */
-		else if(hist_compare(fdo,initial_fdo))
+		/* if execonsave is enabled, run the command only if it has changed */
+		else if(!sh_isoption(SH_EXECONSAVE) || hist_compare(fdo,initial_fdo))
 		{
 			fdo = sh_chkopen(fname);
 			iop = sfnew(NULL,buff,IOBSIZE,fdo,SFIO_READ);
