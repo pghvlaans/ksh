@@ -32,7 +32,7 @@
 
 #if !SHOPT_SCRIPTONLY
 
-static void hist_subst(const char*, int fd, char*);
+static void hist_subst(const char*, int fd, char*, char*);
 static int hist_compare(int fdo, int initial_fdo);
 
 #if 0
@@ -288,7 +288,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 	sh_onstate(SH_VERBOSE);	/* echo lines as read */
 	if(replace)
 	{
-		hist_subst(error_info.id,fdo,replace);
+		hist_subst(error_info.id,fdo,replace,fname);
 		sh_close(fdo);
 		sh_close(initial_fdo);
 	}
@@ -303,6 +303,8 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
 			sh_close(fdo);
 			hist_depth = 0;
 			errormsg(SH_DICT,ERROR_exit(1),e_toodeep,"history");
+			unlink(fname);
+			free(fname);
 			UNREACHABLE();
 		}
 		if(!ran_editor)
@@ -341,7 +343,7 @@ int	b_hist(int argc,char *argv[], Shbltin_t *context)
  * given a file containing a command and a string of the form old=new,
  * execute the command with the string old replaced by new
  */
-static void hist_subst(const char *command,int fd,char *replace)
+static void hist_subst(const char *command,int fd,char *replace,char *fname)
 {
 	char *newp=replace;
 	char *sp;
@@ -361,6 +363,8 @@ static void hist_subst(const char *command,int fd,char *replace)
 	if((sp=sh_substitute(string,replace,newp))==0)
 	{
 		sh_close(fd);
+		unlink(fname);
+		free(fname);
 		errormsg(SH_DICT,ERROR_exit(1),e_subst,command);
 		UNREACHABLE();
 	}
