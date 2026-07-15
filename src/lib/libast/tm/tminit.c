@@ -66,6 +66,7 @@ static Tm_info_t	_tm_info_ = { 0 };
 Tm_info_t*		_tm_infop_ = &_tm_info_;
 
 static char*		tz_abbr;
+int			faulty_dst = 0;
 
 #if _tzset_environ
 
@@ -255,8 +256,10 @@ tmlocal(time_t now)
 				m = isdst;
 			}
 			m -= n;
+			faulty_dst = 0;
 			break;
 		}
+		faulty_dst = isdst;
 	}
 	local.west = (short)n;
 	local.dst = (short)m;
@@ -456,6 +459,10 @@ tminit(Tm_zone_t* zp, time_t now, const char newzone)
 	if (!tm_info.local || newzone)
 		tmlocal(now);
 	if (!zp || newzone)
+	{
 		zp = tm_info.local;
+		if (faulty_dst)
+			zp->dst = 0;
+	}
 	tm_info.zone = zp;
 }

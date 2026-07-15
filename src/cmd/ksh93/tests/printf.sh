@@ -220,6 +220,10 @@ T '#236961303'				'1977-07-05 17:35:03'
 export TZ=Europe/London
 T '#0'					'1970-01-01 01:00:00'
 
+C='Incomplete POSIX timezone strings (bad time, musl)' # https://github.com/ksh93/ksh/issues/976
+export TZ=EST5EDT
+T '#1274252800'			'2010-05-19 03:06:40'
+
 format='%Y-%m-%d'
 export TZ=UTC
 
