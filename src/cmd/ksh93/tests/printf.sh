@@ -211,39 +211,39 @@ function do_test # 1:LINENO 2:printf-STRING 3:match-string
 }
 
 # The first tests require a time zone with one or more historical changes.
-format='%Y-%m-%d %H:%M:%S'
+format='%Y-%m-%d %H:%M:%S %Z'
 export TZ=Europe/Riga
 
 C='Historical changes (bad time)' # https://github.com/ksh93/ksh/issues/669
-T '#236961303'				'1977-07-05 17:35:03'
+T '#236961303'				'1977-07-05 17:35:03 MSK'
 
 export TZ=Europe/London
-T '#0'					'1970-01-01 01:00:00'
+T '#0'					'1970-01-01 01:00:00 BST'
 
 C='Before and after a historical change (bad time)'
 export TZ=Pacific/Apia
-T '#1325239200'				'2011-12-31 00:00:00'
-T '#1325239199'				'2011-12-29 23:59:59'
+T '#1325239200'				'2011-12-31 00:00:00 +14'
+T '#1325239199'				'2011-12-29 23:59:59 -10'
 
 C='Historical change from one DST zone to another (bad time)'
 export TZ=Europe/Chisinau
-T '#642286800'					'1990-05-10 00:00:00'
+T '#642286800'					'1990-05-10 00:00:00 EEST'
 
 C='Historical change from DST to standard (bad time)'
 export TZ=America/Indiana/Knox
-T '#688626000'					'1991-10-28 00:00:00'
+T '#688626000'					'1991-10-28 00:00:00 EST'
 
 C='Historical change from standard to DST (bad time)'
 export TZ=America/Kentucky/Louisville
-T '#126766800'					'1974-01-07 00:00:00'
+T '#126766800'					'1974-01-07 00:00:00 CDT'
 
 C='Historical change from standard to standard (bad time)'
 export TZ=America/Argentina/San_Juan
-T '#1086148800'				'2004-06-02 00:00:00'
+T '#1086148800'				'2004-06-02 00:00:00 -04'
 
 C='POSIX timezone strings without rules (bad time, musl)' #https://github.com/ksh93/ksh/issues/976
 export TZ=EST5EDT
-T '#1274252800'				'2010-05-19 03:06:40'
+T '#1274252800'				'2010-05-19 03:06:40 EDT'
 
 format='%Y-%m-%d'
 export TZ=UTC
