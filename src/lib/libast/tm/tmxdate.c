@@ -1565,7 +1565,7 @@ tmxdate(const char* s, char** e, Time_t now)
 						}
 						if (state & (LAST|NEXT|THIS))
 						{
-							if (f > 0)
+							if (f > 0 && state & ORDINAL)
 								tm->tm_year += f;
 							n = i;
 							goto rel_month;
