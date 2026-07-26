@@ -60,6 +60,7 @@
 #define WORK		(1UL<<18)
 #define YEAR		(1UL<<19)
 #define ZONE		(1UL<<20)
+#define YWEEK		(1UL<<21)
 
 #define FFMT		"%s%s%s%s%s%s%s|"
 #define FLAGS(f)	(f&EXACT)?"|EXACT":"",(f&LAST)?"|LAST":"",(f&THIS)?"|THIS":"",(f&NEXT)?"|NEXT":"",(f&ORDINAL)?"|ORDINAL":"",(f&FINAL)?"|FINAL":"",(f&WORK)?"|WORK":""
@@ -742,7 +743,7 @@ tmxdate(const char* s, char** e, Time_t now)
 				if (!(state & LAST))	/* use 'exact' to get HHMMSS */
 					tm->tm_hour = tm->tm_min = tm->tm_sec = tm->tm_nsec = 0;
 				tmweek(tm, 2, (int)n, k);
-				set |= YEAR|MONTH|DAY;
+				set |= YEAR|MONTH|DAY|YWEEK;
 				s = t;
 				continue;
 			}
@@ -1312,7 +1313,7 @@ tmxdate(const char* s, char** e, Time_t now)
 					case TM_DAY:
 					case TM_PARTS:
 					case TM_HOURS:
-						state |= set & (EXACT|LAST|NEXT|THIS);
+						state |= set & (EXACT|LAST|NEXT|THIS|YWEEK);
 						/*
 						 * disambiguate english "second"
 						 */
@@ -1525,7 +1526,9 @@ tmxdate(const char* s, char** e, Time_t now)
 						{
 							if (f >= 0)
 								day = -1;
-							else if (m > 0 && (state & (NEXT|YEAR|MONTH)) == NEXT && j >= 0)
+							else if (state & ORDINAL && m > 0 && (state & (NEXT|YEAR|MONTH)) == NEXT && j >= 0)
+								m--;
+							if (!(state & (ORDINAL|YWEEK)) && m > 0 && (state & (NEXT|YEAR|MONTH)) == NEXT && j > 0)
 								m--;
 							tm->tm_mday += j + m * 7;
 							set &= ~(LAST|NEXT|THIS|ORDINAL); /*AHA*/
