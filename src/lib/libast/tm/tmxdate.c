@@ -1562,11 +1562,11 @@ tmxdate(const char* s, char** e, Time_t now)
 								goto done;
 							state |= DAY|MDAY;
 							tm->tm_mday = (int)n;
-							if (f > 0 && state & (LAST|NEXT|THIS))
-								tm->tm_year += f;
 						}
 						if (state & (LAST|NEXT|THIS))
 						{
+							if (f > 0)
+								tm->tm_year += f;
 							n = i;
 							goto rel_month;
 						}
