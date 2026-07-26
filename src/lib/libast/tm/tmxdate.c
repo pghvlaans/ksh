@@ -1325,7 +1325,7 @@ tmxdate(const char* s, char** e, Time_t now)
 							k = tmlex(u, &u,
 								tm_info.format, TM_NFORM,
 								tm_info.format + TM_SUFFIXES, TM_PARTS - TM_SUFFIXES);
-							if (k > 0)
+							if (k >= 0)
 							{
 								n = 2;
 								goto ordinal;
