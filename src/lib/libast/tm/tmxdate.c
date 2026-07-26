@@ -1562,7 +1562,7 @@ tmxdate(const char* s, char** e, Time_t now)
 								goto done;
 							state |= DAY|MDAY;
 							tm->tm_mday = (int)n;
-							if (f > 0)
+							if (f > 0 && state & (LAST|NEXT|THIS))
 								tm->tm_year += f;
 						}
 						if (state & (LAST|NEXT|THIS))
@@ -1670,7 +1670,7 @@ tmxdate(const char* s, char** e, Time_t now)
 					if (state & LAST)
 						tm->tm_year -= (tm->tm_mon < n) ? 0 : 1;
 					else
-						tm->tm_year += ((state & NEXT) ? 1 : 0) + ((tm->tm_mon < n) ? 1 : 0);
+						tm->tm_year += (tm->tm_mon < n) ? 1 : 0;
 					if (state & MDAY)
 						goto clear_hour;
 					set &= ~(LAST|NEXT|THIS); /*AHA*/
